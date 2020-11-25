@@ -126,17 +126,17 @@ public class BLEDeviceFilter {
     }
 
     /// Extract all manufacturer data segments from raw scan record data
-    protected final static List<Data> extractManufacturerData(final Data raw) {
+    protected final static List<Data> extractManufacturerData(final Data raw) { // AFC Duplication - please replace with equivalent AdvertParser method
         final List<Data> segments = new ArrayList<>(1);
         // Scan raw data to search for "FF4C00" and use preceding 1-byte to establish length of segment
-        for (int i=0; i<raw.value.length-2; i++) {
+        for (int i=0; i<raw.value.length-2; i++) { // AFC this needs to be moved along by consumed data
             try {
-                // Search for "FF4C00"
+                // Search for "FF4C00" // AFC No need to search, each segment is preceded by a data count. What if FF4c00 happened to exist as part of another data area?
                 if (raw.value[i] == (byte) 0xFF && raw.value[i+1] == (byte) 0x4C && raw.value[i+2] == (byte) 0x00) {
                     // Extract segment based on 1-byte length value preceding "FF4C00"
                     final int lengthOfManufacturerDataSegment = raw.value[i-1] & 0xFF;
                     final Data segment = raw.subdata(i+3, lengthOfManufacturerDataSegment - 3);
-                    segments.add(segment);
+                    segments.add(segment); // AFC very lucky that add null does not throw an exception - last 3 bytes could be 'FF4C00' as they are encrypted bytes. This results in subdata returning null.
                 }
             } catch (Throwable e) {
                 // Errors are expected due to parsing errors and corrupted data
@@ -146,7 +146,7 @@ public class BLEDeviceFilter {
     }
 
     /// Extract all messages from manufacturer data segments
-    protected final static List<Data> extractMessageData(final List<Data> manufacturerData) {
+    protected final static List<Data> extractMessageData(final List<Data> manufacturerData) { // AFC Duplication - please replace with equivalent AdvertParser method
         final List<Data> messages = new ArrayList<>();
         for (Data segment : manufacturerData) {
             try {
@@ -177,7 +177,7 @@ public class BLEDeviceFilter {
     // MARK:- Filtering functions
 
     /// Extract feature data from scan record
-    private List<Data> extractFeatures(final ScanRecord scanRecord) {
+    private List<Data> extractFeatures(final ScanRecord scanRecord) { // AFC Duplication - please replace with equivalent AdvertParser method. Also cannot be tested independently of Bluetooth stack - tightly coupled
         if (scanRecord == null) {
             return null;
         }
@@ -257,7 +257,7 @@ public class BLEDeviceFilter {
     }
 
     /// Match scan record messages against all registered patterns, returns matching pattern or null.
-    public MatchingPattern match(final BLEDevice device) {
+    public MatchingPattern match(final BLEDevice device) { // AFC tightly coupled to ScanRecord, consider revising
         // No pattern to match against
         if (filterPatterns == null || filterPatterns.isEmpty()) {
             return null;
@@ -284,7 +284,7 @@ public class BLEDeviceFilter {
     }
 
     /// Should the device be ignored based on scan record data?
-    private boolean ignoreBasedOnStatistics(final BLEDevice device) {
+    private boolean ignoreBasedOnStatistics(final BLEDevice device) { // AFC tightly coupled to ScanRecord, consider revising
         final ScanRecord scanRecord = device.scanRecord();
         // Do not ignore device without any scan record data
         if (scanRecord == null) {
@@ -304,7 +304,7 @@ public class BLEDeviceFilter {
                 return false;
             }
             // Do not ignore device if there is even one example of it being legitimate
-            if (shouldIgnore.no > 0) {
+            if (shouldIgnore.no > 0) { // AFC This logic could fail if data to result in 'yes' was spotted before data for 'no'
                 return false;
             }
             // Ignore device if the signature has been registered for ignore more than twice
