@@ -28,6 +28,7 @@ import io.heraldprox.herald.sensor.analysis.SocialDistance;
 //import io.heraldprox.herald.sensor.analysis.algorithms.distance.SmoothedLinearModelAnalyser;
 //import io.heraldprox.herald.sensor.analysis.algorithms.distance.SelfCalibratedModel;
 import io.heraldprox.herald.sensor.analysis.algorithms.distance.TemporalHistogramModel;
+import io.heraldprox.herald.sensor.analysis.evaluation.ProxemicsSelfCalibrationAnalyser;
 import io.heraldprox.herald.sensor.analysis.sampling.AnalysisDelegateManager;
 import io.heraldprox.herald.sensor.analysis.sampling.AnalysisProviderManager;
 import io.heraldprox.herald.sensor.analysis.sampling.AnalysisRunner;
@@ -110,6 +111,12 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
 //            TimeInterval.minutes(5), TimeInterval.hours(8),
 //            new TextFile(AppDelegate.getAppDelegate(), "rssi_histogram.csv"));
 //    private final SmoothedLinearModelAnalyser smoothedLinearModelAnalyser = new SmoothedLinearModelAnalyser(new TimeInterval(1), new TimeInterval(60), smoothedLinearModel);
+
+    private final ProxemicsSelfCalibrationAnalyser proxAnalyser = new ProxemicsSelfCalibrationAnalyser(
+            new TextFile(AppDelegate.getAppDelegate(), "beacon_field_position.csv"),
+            new TextFile(AppDelegate.getAppDelegate(), "corrected_rssi_aggregates.csv"),
+            new TextFile(AppDelegate.getAppDelegate(), "calibrations.csv")
+    );
     private final AnalysisProviderManager analysisProviderManager = new AnalysisProviderManager(/*smoothedLinearModelAnalyser*/);
     private final ConcreteAnalysisDelegate<Distance> analysisDelegate = new ConcreteAnalysisDelegate<>(Distance.class, 5);
     private final AnalysisDelegateManager analysisDelegateManager = new AnalysisDelegateManager(analysisDelegate);
@@ -231,6 +238,7 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
             final Sensor sensor = AppDelegate.getAppDelegate().sensor();
             sensor.add(this);
             sensor.add(socialMixingScore);
+            sensor.add(proxAnalyser); // Proxemics self-calibration analyser, and 3D beacon field grid calculator
             ((TextView) findViewById(R.id.device)).setText(SensorArray.deviceDescription);
             PayloadData payloadData = ((SensorArray) AppDelegate.getAppDelegate().sensor()).payloadData();
             ((TextView) findViewById(R.id.payload)).setText("PAYLOAD : " + payloadData.shortName());
@@ -423,6 +431,7 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
 
         // Update samples (note: Has overhead - should be via a timer every few minutes in prod
         analysisRunner.run();
+        proxAnalyser.update(new Date());
 
         final TemporalHistogramModelView view = ((TemporalHistogramModelView) findViewById(R.id.temporalHistogram));
         final Date timeNow = new Date();
@@ -567,6 +576,10 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
                     // but the overhead is minimal as the demonstration distance analyser
                     // will only perform calculations and offer updates at fixed intervals
                     // analysisRunner.run();
+
+                    // Also update proxAnalyser
+
+                    proxAnalyser.update(new Date());
                 }
             }
         }
