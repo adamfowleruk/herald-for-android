@@ -8,6 +8,7 @@ import androidx.annotation.NonNull;
 
 import org.junit.Test;
 
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.ble.BLEDevice;
 import io.heraldprox.herald.sensor.ble.BLEDeviceAttribute;
 import io.heraldprox.herald.sensor.ble.BLEDeviceDelegate;
@@ -50,6 +51,10 @@ public class TestPayloadDataSupplierTests {
         final BLEDevice bleDevice = new BLEDevice(new TargetIdentifier("test"), new BLEDeviceDelegate() {
             @Override
             public void device(@NonNull final BLEDevice device, @NonNull final BLEDeviceAttribute didUpdate) {
+            }
+
+            @Override
+            public void device(@NonNull BLEDevice device, @NonNull SensorMetadata metaUpdatedOrAdded) {
             }
         });
         bleDevice.rssi(new RSSI(-10));

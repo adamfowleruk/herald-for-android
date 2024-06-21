@@ -5,6 +5,7 @@ import androidx.annotation.NonNull;
 import io.heraldprox.herald.sensor.datatype.TargetIdentifier;
 
 import java.util.Date;
+import java.util.TreeSet;
 
 public class Device {
     /**
@@ -22,6 +23,12 @@ public class Device {
      */
     @NonNull
     public final TargetIdentifier identifier;
+
+    /**
+     * The metadata specified for this device. Stored unique by MetadataClass and InstanceID by default.
+     */
+    @NonNull
+    public final TreeSet<SensorMetadata> metadata = new TreeSet<>();
 
     public Device(@NonNull final TargetIdentifier identifier) {
         this.createdAt = new Date();

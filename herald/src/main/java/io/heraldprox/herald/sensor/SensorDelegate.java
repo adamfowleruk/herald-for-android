@@ -90,4 +90,14 @@ public interface SensorDelegate {
      * @param didUpdateState
      */
     void sensor(@NonNull final SensorType sensor, @NonNull final SensorState didUpdateState);
+
+    /**
+     * Announces that a device has been given an arbitrary metadata tag. Only fires when the SensorMetadata about this target has been added or changed.
+     *
+     * @since v2.3
+     * @param sensor
+     * @param didClassify The metadata added or updated
+     * @param aboutTarget The target this metadata describes
+     */
+    void sensor(@NonNull final SensorType sensor, @NonNull final SensorMetadata didClassify, @NonNull final TargetIdentifier aboutTarget);
 }

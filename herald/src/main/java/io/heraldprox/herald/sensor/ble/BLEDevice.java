@@ -12,6 +12,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import io.heraldprox.herald.sensor.Device;
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.datatype.Calibration;
 import io.heraldprox.herald.sensor.datatype.CalibrationMeasurementUnit;
 import io.heraldprox.herald.sensor.datatype.Data;
@@ -455,5 +456,27 @@ public class BLEDevice extends Device {
     @Override
     public String toString() {
         return description();
+    }
+
+    /**
+     * Adds metadata about a Bluetooth device and cascades it, if its value has changed, to listeneners in Herald.
+     * Forms the foundation of the device make/model and Beacon identification code.
+     *
+     * @since v2.3
+     * @param meta
+     */
+    public void addDeviceMetadata(SensorMetadata meta) {
+        boolean changed = true;
+        for (SensorMetadata existing : metadata) {
+            if (existing.equals(meta)) {
+                if (existing.getData().equals(meta.getData())) {
+                    changed = false;
+                }
+            }
+        }
+        metadata.add(meta);
+        if (changed) {
+            delegate.device(this, meta);
+        }
     }
 }

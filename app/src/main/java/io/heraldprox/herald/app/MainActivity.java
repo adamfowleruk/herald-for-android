@@ -9,10 +9,13 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.AdapterView;
+import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.ListView;
+import android.widget.PopupWindow;
 import android.widget.Switch;
 import android.widget.TextView;
 
@@ -24,6 +27,7 @@ import androidx.core.content.ContextCompat;
 import io.heraldprox.herald.sensor.Sensor;
 import io.heraldprox.herald.sensor.SensorArray;
 import io.heraldprox.herald.sensor.SensorDelegate;
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.analysis.SocialDistance;
 //import io.heraldprox.herald.sensor.analysis.algorithms.distance.SmoothedLinearModelAnalyser;
 //import io.heraldprox.herald.sensor.analysis.algorithms.distance.SelfCalibratedModel;
@@ -40,9 +44,11 @@ import io.heraldprox.herald.sensor.analysis.views.Since;
 import io.heraldprox.herald.sensor.ble.BLESensorConfiguration;
 import io.heraldprox.herald.sensor.data.Resettable;
 import io.heraldprox.herald.sensor.data.TextFile;
+import io.heraldprox.herald.sensor.datatype.Callback;
 import io.heraldprox.herald.sensor.datatype.Data;
 import io.heraldprox.herald.sensor.datatype.Date;
 import io.heraldprox.herald.sensor.datatype.Distance;
+import io.heraldprox.herald.sensor.datatype.Grid3DLocationReference;
 import io.heraldprox.herald.sensor.datatype.ImmediateSendData;
 import io.heraldprox.herald.sensor.datatype.Location;
 import io.heraldprox.herald.sensor.datatype.PayloadData;
@@ -53,6 +59,7 @@ import io.heraldprox.herald.sensor.datatype.SensorState;
 import io.heraldprox.herald.sensor.datatype.SensorType;
 import io.heraldprox.herald.sensor.datatype.TargetIdentifier;
 import io.heraldprox.herald.sensor.datatype.TimeInterval;
+import io.heraldprox.herald.sensor.datatype.Tuple;
 import io.heraldprox.herald.sensor.datatype.UInt16;
 import io.heraldprox.herald.sensor.datatype.UInt8;
 import io.heraldprox.herald.sensor.payload.extended.ConcreteExtendedDataSectionV1;
@@ -95,6 +102,8 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
     private final UUID defaultChannelId = UUID.fromString("12345678-9012-1234-1234-123456789012");
     private UUID mySenderRecipientId = null;
 
+    private PopupWindow positionPopup = null;
+
     // MARK:- Distance estimation
 
     // Removed due to performance issues on old phone for https://github.com/theheraldproject/herald-for-android/issues/239
@@ -115,7 +124,13 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
     private final ProxemicsSelfCalibrationAnalyser proxAnalyser = new ProxemicsSelfCalibrationAnalyser(
             new TextFile(AppDelegate.getAppDelegate(), "beacon_field_position.csv"),
             new TextFile(AppDelegate.getAppDelegate(), "corrected_rssi_aggregates.csv"),
-            new TextFile(AppDelegate.getAppDelegate(), "calibrations.csv")
+            new TextFile(AppDelegate.getAppDelegate(), "calibrations.csv"),
+            new Callback<Tuple<Date, Grid3DLocationReference>>() {
+                @Override
+                public void accept(Tuple<Date, Grid3DLocationReference> value) {
+                    updatePosition(value.a,value.b);
+                }
+            }
     );
     private final AnalysisProviderManager analysisProviderManager = new AnalysisProviderManager(/*smoothedLinearModelAnalyser*/);
     private final ConcreteAnalysisDelegate<Distance> analysisDelegate = new ConcreteAnalysisDelegate<>(Distance.class, 5);
@@ -274,6 +289,18 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
                 }
             });
 
+            positionPopup = new PopupWindow(findViewById(R.id.layoutPosition));
+
+            final Button posButton = findViewById(R.id.button);
+            posButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    // pop up 3D location popup
+                    positionPopup.showAtLocation(findViewById(R.id.layoutMain),
+                            Gravity.CENTER,0,0);
+                }
+            });
+
             // Sensor is on by default, unless automated test has been enabled,
             // in which case, sensor is off by default and controlled by test
             // server remote commands.
@@ -386,6 +413,22 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
             }
         }
         updateSocialDistance(socialMixingScoreUnit);
+    }
+
+    private void updatePosition(Date when, Grid3DLocationReference pos) {
+        if (!foreground) {
+            return;
+        }
+        if (null == findViewById(R.id.txtX)) {
+            return;
+        }
+//        ((TextView) findViewById(R.id.txtX)).setText(Double.toString(pos.getX()));
+//        ((TextView) findViewById(R.id.txtY)).setText(Double.toString(pos.getY()));
+//        ((TextView) findViewById(R.id.txtZ)).setText(Double.toString(pos.getZ()));
+//        ((TextView) findViewById(R.id.txtXSD)).setText(Double.toString(pos.getXSd()));
+//        ((TextView) findViewById(R.id.txtYSD)).setText(Double.toString(pos.getYSd()));
+//        ((TextView) findViewById(R.id.txtZSD)).setText(Double.toString(pos.getZSd()));
+//        ((TextView) findViewById(R.id.txtWhen)).setText(when.toString());
     }
 
     private void updateCounts() {
@@ -645,6 +688,11 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
                 }
             });
         }
+    }
+
+    @Override
+    public void sensor(@NonNull SensorType sensor, @NonNull SensorMetadata didClassify, @NonNull TargetIdentifier aboutTarget) {
+        Log.d(tag, "didClassify (about=" + aboutTarget.toString() + ",data=" + didClassify.getData() + ")");
     }
 
     // MARK:- OnItemClickListener

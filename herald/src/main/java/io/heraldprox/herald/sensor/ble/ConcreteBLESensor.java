@@ -8,6 +8,7 @@ import android.content.Context;
 
 import androidx.annotation.NonNull;
 
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.data.ConcreteSensorLogger;
 import io.heraldprox.herald.sensor.data.SensorLogger;
 import io.heraldprox.herald.sensor.datatype.BluetoothState;
@@ -177,6 +178,19 @@ public class ConcreteBLESensor implements BLESensor, BLEDatabaseDelegate, Blueto
             default: {
             }
         }
+    }
+
+    @Override
+    public void bleDatabaseDidUpdateMetadata(@NonNull BLEDevice device, @NonNull SensorMetadata metaUpdatedOrAdded) {
+        operationQueue.execute(new Runnable() {
+            @Override
+            public void run() {
+                for (final SensorDelegate delegate : delegates) {
+                    // Send metadata update
+                    delegate.sensor(SensorType.BLE, metaUpdatedOrAdded, device.identifier);
+                }
+            }
+        });
     }
 
     @Override

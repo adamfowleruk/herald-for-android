@@ -21,6 +21,8 @@ public class ConcreteExtendedDataV1 implements ExtendedData {
     @NonNull
     private final PayloadData payloadData;
 
+    private boolean parsedOk = true;
+
     public ConcreteExtendedDataV1() {
         payloadData = new PayloadData();
     }
@@ -161,8 +163,18 @@ public class ConcreteExtendedDataV1 implements ExtendedData {
         return payloadData;
     }
 
+    /**
+     * Attempts to validate our stored data which may have been received.
+     *
+     * @return True if the data is fully valid and parsed successfully with all data used.
+     */
+    public boolean isValid() {
+        final List<ConcreteExtendedDataSectionV1> sections = getSections();
+        return parsedOk;
+    }
     @NonNull
     public List<ConcreteExtendedDataSectionV1> getSections() {
+        parsedOk = true;
         final List<ConcreteExtendedDataSectionV1> sections = new ArrayList<>();
 
         int pos = 0;
@@ -181,6 +193,7 @@ public class ConcreteExtendedDataV1 implements ExtendedData {
             // sanity check length
             if (length != null && pos + length.value > payloadData.value.length) {
                 length = new UInt8(payloadData.value.length - pos);
+                parsedOk = false; // Length in packet was longer than packet data itself
             }
             // extract data
             if (length != null) {
@@ -188,6 +201,8 @@ public class ConcreteExtendedDataV1 implements ExtendedData {
 
                 if (code != null && data != null) {
                     sections.add(new ConcreteExtendedDataSectionV1(code, length, data));
+                } else {
+                    parsedOk = false; // invalid code or length in outer packet area
                 }
 
                 // repeat

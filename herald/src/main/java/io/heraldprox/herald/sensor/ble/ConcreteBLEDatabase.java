@@ -11,6 +11,7 @@ import android.bluetooth.le.ScanResult;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.data.ConcreteSensorLogger;
 import io.heraldprox.herald.sensor.data.SensorLogger;
 import io.heraldprox.herald.sensor.datatype.Data;
@@ -324,6 +325,21 @@ public class ConcreteBLEDatabase implements BLEDatabase, BLEDeviceDelegate {
                 logger.debug("update (device={},attribute={})", device.identifier, didUpdate.name());
                 for (BLEDatabaseDelegate delegate : delegates) {
                     delegate.bleDatabaseDidUpdate(device, didUpdate);
+                }
+            }
+        });
+    }
+
+    @Override
+    public void device(@NonNull BLEDevice device, @NonNull SensorMetadata metaUpdatedOrAdded) {
+        queue.execute(new Runnable() {
+            @Override
+            public void run() {
+                logger.debug("updateMetadata (device={},metadataClass={},metadataInstanceId={},data={})",
+                        device.identifier, metaUpdatedOrAdded.getMetadataClass(),
+                        metaUpdatedOrAdded.getInstanceId(), metaUpdatedOrAdded.getData());
+                for (BLEDatabaseDelegate delegate : delegates) {
+                    delegate.bleDatabaseDidUpdateMetadata(device, metaUpdatedOrAdded);
                 }
             }
         });

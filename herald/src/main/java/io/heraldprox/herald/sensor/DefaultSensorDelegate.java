@@ -56,4 +56,8 @@ public abstract class DefaultSensorDelegate implements SensorDelegate {
     @Override
     public void sensor(@NonNull final SensorType sensor, @NonNull final SensorState didUpdateState) {
     }
+
+    @Override
+    public void sensor(@NonNull final SensorType sensor, @NonNull final SensorMetadata metadata, @NonNull final TargetIdentifier aboutTarget) {
+    }
 }

@@ -151,6 +151,8 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             device.registerDiscovery();
             // Read RSSI from scan result
             device.rssi(new RSSI(scanResult.getRssi()));
+
+            // TODO check the metadata of the device advertisement to determine if its a Beacon (E.g. Microsoft beacon, or Herald beacon)
         }
 
         @Override

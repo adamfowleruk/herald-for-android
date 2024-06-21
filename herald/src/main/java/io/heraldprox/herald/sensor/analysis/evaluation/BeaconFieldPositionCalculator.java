@@ -7,6 +7,7 @@ import java.util.Vector;
 
 import io.heraldprox.herald.sensor.analysis.aggregates.Mean;
 import io.heraldprox.herald.sensor.data.TextFile;
+import io.heraldprox.herald.sensor.datatype.Callback;
 import io.heraldprox.herald.sensor.datatype.Data;
 import io.heraldprox.herald.sensor.datatype.Date;
 import io.heraldprox.herald.sensor.datatype.Grid3DLocationReference;
@@ -24,8 +25,19 @@ public class BeaconFieldPositionCalculator {
 
     protected ArrayList<Tuple<Date,Grid3DLocationReference>> positionsOverTime = new ArrayList<>();
 
+    protected Callback<Tuple<Date,Grid3DLocationReference>> cb = new Callback<Tuple<Date,Grid3DLocationReference>>(){
+        @Override
+        public void accept(Tuple<Date, Grid3DLocationReference> value) {
+            // do nothing
+        }
+    };
+
     public BeaconFieldPositionCalculator(int secondsPerAnalysis) {
         this.interval = secondsPerAnalysis;
+    }
+
+    public void setCallback(Callback<Tuple<Date,Grid3DLocationReference>> newCb) {
+        this.cb = newCb;
     }
 
     public void update(Date nowDate, final Hashtable<TargetIdentifier,DeviceCalibrationRecord> records, final TextFile writeTo) {
@@ -180,16 +192,22 @@ public class BeaconFieldPositionCalculator {
         Grid3DLocationReference estimatedPosition = new Grid3DLocationReference(
                 xMean,
                 yMean,
-                zMean
+                zMean,
+                xSD,
+                ySD,
+                zSD
         );
 
         // now record this estimate
-        positionsOverTime.add(new Tuple<Date,Grid3DLocationReference>(endTimeDate,estimatedPosition));
-        writeTo.write(endTimeDate + "," + estimatedPosition.getX() + "," + estimatedPosition.getY() + "," + estimatedPosition.getZ() +
+        Tuple<Date,Grid3DLocationReference> newPos = new Tuple<Date,Grid3DLocationReference>(endTimeDate,estimatedPosition);
+        positionsOverTime.add(newPos);
+        writeTo.write(endTimeDate + "," + xMean + "," + yMean + "," + zMean +
                 "," + xSD + "," + ySD + "," + zSD);
 
         // set new lastRun
         lastRun = endTimeDate;
+
+        this.cb.accept(newPos);
     }
 
     public List<Tuple<Date,Grid3DLocationReference>> getPositionHistory() {

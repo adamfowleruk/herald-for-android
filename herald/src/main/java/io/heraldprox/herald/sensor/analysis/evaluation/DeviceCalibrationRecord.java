@@ -5,14 +5,17 @@ import androidx.annotation.NonNull;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.TreeSet;
 
 import io.heraldprox.herald.sensor.Device;
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.datatype.Callback;
 import io.heraldprox.herald.sensor.datatype.Date;
 import io.heraldprox.herald.sensor.datatype.Grid3DLocationReference;
 import io.heraldprox.herald.sensor.datatype.Proximity;
 import io.heraldprox.herald.sensor.datatype.TargetIdentifier;
 import io.heraldprox.herald.sensor.datatype.Tuple;
+import io.heraldprox.herald.sensor.metadata.BeaconMetadata;
 
 /**
  * This class manages an individual detected devices corrected RSSI readings over time.
@@ -31,12 +34,17 @@ public class DeviceCalibrationRecord {
     protected boolean isTooShortContact = false;
     protected boolean hasTooLittleData = false;
 
+
     protected boolean deleted = false;
+    protected boolean beacon = false;
+    protected boolean heraldBeacon = false;
     protected Grid3DLocationReference position = null;
 
     // Use a datatype that orders by Date, ascending
     protected TimeSeries<CorrectedRSSI> data = new TimeSeries<>();
 //    protected ArrayList<Tuple<Double,Date>> data = new ArrayList<>();
+
+    TreeSet<SensorMetadata> metadata = new TreeSet<>();
 
     public DeviceCalibrationRecord(@NonNull TargetIdentifier tgt) {
         this.target = tgt;
@@ -167,16 +175,25 @@ public class DeviceCalibrationRecord {
         });
     }
 
-    public void setBeaconAndPosition(Grid3DLocationReference pos) {
+    public void setPosition(Grid3DLocationReference pos) {
         this.position = pos;
     }
 
     public boolean isPositionBeacon() {
-        return null != this.position;
+        return beacon && heraldBeacon && (null != this.position);
     }
 
     public Grid3DLocationReference getPosition() {
         return position;
+    }
+
+    public void addSensorMetadata(SensorMetadata meta) {
+        this.metadata.add(meta);
+        if (meta instanceof BeaconMetadata) {
+            beacon = true;
+            BeaconMetadata bm = (BeaconMetadata)meta;
+            heraldBeacon = bm.isHeraldBeacon();
+        }
     }
 
 }

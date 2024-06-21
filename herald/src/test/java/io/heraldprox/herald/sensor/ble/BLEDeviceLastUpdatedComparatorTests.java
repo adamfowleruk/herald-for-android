@@ -6,6 +6,7 @@ package io.heraldprox.herald.sensor.ble;
 
 import androidx.annotation.NonNull;
 
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.datatype.RSSI;
 import io.heraldprox.herald.sensor.datatype.TargetIdentifier;
 
@@ -24,6 +25,11 @@ public class BLEDeviceLastUpdatedComparatorTests {
         BLEDeviceDelegate dummyDelegate = new BLEDeviceDelegate() {
             @Override
             public void device(@NonNull final BLEDevice device, @NonNull final BLEDeviceAttribute didUpdate) {
+                // do nothing
+            }
+
+            @Override
+            public void device(@NonNull BLEDevice device, @NonNull SensorMetadata metaUpdatedOrAdded) {
                 // do nothing
             }
         };

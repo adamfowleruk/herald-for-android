@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 import io.heraldprox.herald.sensor.SensorDelegate;
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.datatype.Date;
 import io.heraldprox.herald.sensor.datatype.ImmediateSendData;
 import io.heraldprox.herald.sensor.datatype.Location;
@@ -102,6 +103,11 @@ public class ConcreteGPDMPLayer3Manager implements SensorDelegate, GPDMPLayer3Ma
     @Override
     public void sensor(@NonNull SensorType sensor, @NonNull SensorState didUpdateState) {
         // TODO Stop sending outgoing to BLE (for example) if that SensorType enters the off state
+    }
+
+    @Override
+    public void sensor(@NonNull SensorType sensor, @NonNull SensorMetadata didClassify, @NonNull TargetIdentifier aboutTarget) {
+        // ignore
     }
 
     /// MARK: Layer 3 Manager functions

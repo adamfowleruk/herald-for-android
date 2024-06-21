@@ -21,6 +21,7 @@ import androidx.core.app.NotificationManagerCompat;
 import io.heraldprox.herald.sensor.Sensor;
 import io.heraldprox.herald.sensor.SensorArray;
 import io.heraldprox.herald.sensor.SensorDelegate;
+import io.heraldprox.herald.sensor.SensorMetadata;
 import io.heraldprox.herald.sensor.ble.BLESensorConfiguration;
 import io.heraldprox.herald.sensor.data.BatteryLog;
 import io.heraldprox.herald.sensor.data.ContactLog;
@@ -190,6 +191,11 @@ public class AppDelegate extends Application implements SensorDelegate {
     @Override
     public void sensor(@NonNull SensorType sensor, @NonNull SensorState didUpdateState) {
         Log.i(tag, sensor.name() + ",didUpdateState=" + didUpdateState.name());
+    }
+
+    @Override
+    public void sensor(@NonNull SensorType sensor, @NonNull SensorMetadata didClassify, @NonNull TargetIdentifier aboutTarget) {
+        Log.i(tag, sensor.name() + ",didClassify=" + didClassify.getDescription() + ",aboutTarget=" + aboutTarget + ",withData=" + didClassify.getData());
     }
 
     private void parsePayload(String source, SensorType sensor, PayloadData payloadData, TargetIdentifier fromTarget) {
