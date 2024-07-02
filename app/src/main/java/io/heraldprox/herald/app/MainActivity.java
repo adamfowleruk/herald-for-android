@@ -348,8 +348,10 @@ public class MainActivity extends AppCompatActivity implements SensorDelegate, A
         }
         // Update UI
         ((TextView) findViewById(R.id.detection)).setText("DETECTION (" + targetList.size() + ")");
-        targetListAdapter.clear();
-        targetListAdapter.addAll(targetList);
+        if (null != targetListAdapter) {
+            targetListAdapter.clear();
+            targetListAdapter.addAll(targetList);
+        }
     }
 
     // Update social distance score
