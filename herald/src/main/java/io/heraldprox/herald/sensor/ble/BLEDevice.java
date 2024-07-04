@@ -1,4 +1,4 @@
-//  Copyright 2020-2021 Herald Project Contributors
+//  Copyright 2020-2024 Herald Project Contributors
 //  SPDX-License-Identifier: Apache-2.0
 //
 
@@ -74,6 +74,8 @@ public class BLEDevice extends Device {
     private BluetoothGattCharacteristic payloadCharacteristic = null;
     @Nullable
     private BluetoothGattCharacteristic legacyPayloadCharacteristic = null;
+    @Nullable
+    private BluetoothGattCharacteristic heraldProtocolV2Characteristic = null;
     @Nullable
     protected byte[] signalCharacteristicWriteValue = null;
     @Nullable
@@ -322,6 +324,7 @@ public class BLEDevice extends Device {
         modelCharacteristic = null;
         deviceNameCharacteristic = null;
         legacyPayloadCharacteristic = null;
+        heraldProtocolV2Characteristic = null;
     }
 
     @Nullable
@@ -331,6 +334,16 @@ public class BLEDevice extends Device {
 
     public void signalCharacteristic(@Nullable final BluetoothGattCharacteristic characteristic) {
         this.signalCharacteristic = characteristic;
+        lastUpdatedAt = new Date();
+    }
+
+    @Nullable
+    public BluetoothGattCharacteristic heraldProtocolV2Characteristic() {
+        return heraldProtocolV2Characteristic;
+    }
+
+    public void heraldProtocolV2Characteristic(@Nullable final BluetoothGattCharacteristic characteristic) {
+        this.heraldProtocolV2Characteristic = characteristic;
         lastUpdatedAt = new Date();
     }
 
@@ -436,11 +449,11 @@ public class BLEDevice extends Device {
     }
 
     public boolean protocolIsOpenTrace() {
-        return null != legacyPayloadCharacteristic && null == signalCharacteristic;
+        return null != legacyPayloadCharacteristic && null == signalCharacteristic && null == heraldProtocolV2Characteristic;
     }
 
     public boolean protocolIsHerald() {
-        return null != signalCharacteristic && null != payloadCharacteristic;
+        return null != signalCharacteristic && null != payloadCharacteristic && null != heraldProtocolV2Characteristic;
     }
 
     public void scanRecord(@Nullable final ScanRecord scanRecord) {

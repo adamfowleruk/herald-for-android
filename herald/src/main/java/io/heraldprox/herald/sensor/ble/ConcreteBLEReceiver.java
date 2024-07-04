@@ -1,4 +1,4 @@
-//  Copyright 2020-2021 Herald Project Contributors
+//  Copyright 2020-2024 Herald Project Contributors
 //  SPDX-License-Identifier: Apache-2.0
 //
 
@@ -51,6 +51,7 @@ import io.heraldprox.herald.sensor.datatype.SignalCharacteristicData;
 import io.heraldprox.herald.sensor.datatype.SignalCharacteristicDataType;
 import io.heraldprox.herald.sensor.datatype.TargetIdentifier;
 import io.heraldprox.herald.sensor.datatype.TimeInterval;
+import io.heraldprox.herald.sensor.protocol.HeraldProtocolV2;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -135,7 +136,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
 
     private enum NextTask {
         nothing, readPayload, writePayload, writeRSSI, writePayloadSharing, immediateSend,
-        readModel, readDeviceName
+        readModel, readDeviceName, writeV2Payload
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -1228,85 +1229,96 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             logger.debug("nextTaskForDevice (device={},task=readDeviceName)", device);
             return NextTask.readDeviceName;
         }
-        // Resolve or confirm operating system by reading payload which
-        // triggers characteristic discovery to confirm the operating system
-        if (device.operatingSystem() == BLEDeviceOperatingSystem.unknown ||
-            device.operatingSystem() == BLEDeviceOperatingSystem.ios_tbc ||
-            device.operatingSystem() == BLEDeviceOperatingSystem.android_tbc) {
-            logger.debug("nextTaskForDevice (device={},task=readPayload|OS)", device);
-            return NextTask.readPayload;
-        }
-        // Immediate send is supported only if service and characteristics
-        // have been discovered, and operating system has been confirmed
-        if (null != device.immediateSendData()) {
-            logger.debug("nextTaskForDevice (device={},task=immediateSend)", device);
-            return NextTask.immediateSend;
-        }
-        // Get payload as top priority
-        if (null == device.payloadData()) {
-            logger.debug("nextTaskForDevice (device={},task=readPayload)", device);
-            return NextTask.readPayload;
-        }
-        // Get payload update if required
-        if (device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
-            logger.debug("nextTaskForDevice (device={},task=readPayloadUpdate,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
-            return NextTask.readPayload;
-        }
-        if (device.protocolIsOpenTrace() && device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.interopOpenTracePayloadDataUpdateTimeInterval.value) {
-            logger.debug("nextTaskForDevice (device={},task=readPayloadUpdate|OpenTrace,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
-            return NextTask.readPayload;
-        }
-        // Write payload, rssi and payload sharing data if this device cannot transmit
-        if (!transmitter.isSupported()) {
-            // Write payload data as top priority
-            if (device.timeIntervalSinceLastWritePayload().value > TimeInterval.minutes(5).value) {
-                logger.debug("nextTaskForDevice (device={},task=writePayload,elapsed={})", device, device.timeIntervalSinceLastWritePayload());
-                return NextTask.writePayload;
+        if (BLESensorConfiguration.heraldProtocolV2Enabled) {
+            // Herald Protocol V2 specific logic - Since v2.3 July 2024
+            // TODO may need logic to separate (Application) 'payload' written and any Herald Protocol V2 internal info being written
+            if (device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+                logger.debug("nextTaskForDevice (device={},task=writeV2Payload,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
+                return NextTask.writeV2Payload;
             }
-            // Write payload sharing data to iOS device if there is data to be shared (alternate between payload sharing and write RSSI)
-            final PayloadSharingData payloadSharingData = database.payloadSharingData(device);
-            if (device.operatingSystem() == BLEDeviceOperatingSystem.ios
-                    && payloadSharingData.data.value.length > 0
-                    && device.timeIntervalSinceLastWritePayloadSharing().value >= TimeInterval.seconds(15).value
-                    && device.timeIntervalSinceLastWritePayloadSharing().value >= device.timeIntervalSinceLastWriteRssi().value) {
-                logger.debug("nextTaskForDevice (device={},task=writePayloadSharing,dataLength={},elapsed={})", device, payloadSharingData.data.value.length, device.timeIntervalSinceLastWritePayloadSharing());
-                return NextTask.writePayloadSharing;
+        }
+        // Herald Protocol V1 enabled check - added July 2024
+        if (BLESensorConfiguration.heraldProtocolV1Enabled) {
+            // Resolve or confirm operating system by reading payload which
+            // triggers characteristic discovery to confirm the operating system
+            if (device.operatingSystem() == BLEDeviceOperatingSystem.unknown ||
+                    device.operatingSystem() == BLEDeviceOperatingSystem.ios_tbc ||
+                    device.operatingSystem() == BLEDeviceOperatingSystem.android_tbc) {
+                logger.debug("nextTaskForDevice (device={},task=readPayload|OS)", device);
+                return NextTask.readPayload;
             }
-            // Write RSSI as frequently as reasonable (alternate between write RSSI and write payload)
-            if (null != device.rssi() &&
-                    device.timeIntervalSinceLastWriteRssi().value >= TimeInterval.seconds(15).value &&
-                    (device.timeIntervalSinceLastWritePayload().value < BLESensorConfiguration.payloadDataUpdateTimeInterval.value
-                        || device.timeIntervalSinceLastWriteRssi().value >= device.timeIntervalSinceLastWritePayload().value)
-            ) {
-                logger.debug("nextTaskForDevice (device={},task=writeRSSI,elapsed={})", device, device.timeIntervalSinceLastWriteRssi());
-                return NextTask.writeRSSI;
+            // Immediate send is supported only if service and characteristics
+            // have been discovered, and operating system has been confirmed
+            if (null != device.immediateSendData()) {
+                logger.debug("nextTaskForDevice (device={},task=immediateSend)", device);
+                return NextTask.immediateSend;
             }
-            // Write payload update if required
-            if (device.timeIntervalSinceLastWritePayload().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
-                logger.debug("nextTaskForDevice (device={},task=writePayloadUpdate,elapsed={})", device, device.timeIntervalSinceLastWritePayload());
-                return NextTask.writePayload;
+            // Get payload as top priority
+            if (null == device.payloadData()) {
+                logger.debug("nextTaskForDevice (device={},task=readPayload)", device);
+                return NextTask.readPayload;
             }
-        } else {
-            // Since v2.2 - Write our payload to iOS if needed (i.e. if they haven't detected us)
-            if (device.operatingSystem() == BLEDeviceOperatingSystem.ios) {
-                final TimeInterval lastTime = device.timeIntervalSinceLastWritePayload();
-                logger.debug("nextTaskForDevice, timeSinceLastWrite (device={},task=writePayload,elapsed={})", device, lastTime);
-                    // Don't forget the = to part! Because both can be never
-                if (lastTime.value >= BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+            // Get payload update if required
+            if (device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+                logger.debug("nextTaskForDevice (device={},task=readPayloadUpdate,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
+                return NextTask.readPayload;
+            }
+            if (device.protocolIsOpenTrace() && device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.interopOpenTracePayloadDataUpdateTimeInterval.value) {
+                logger.debug("nextTaskForDevice (device={},task=readPayloadUpdate|OpenTrace,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
+                return NextTask.readPayload;
+            }
+            // Write payload, rssi and payload sharing data if this device cannot transmit
+            if (!transmitter.isSupported()) {
+                // Write payload data as top priority
+                if (device.timeIntervalSinceLastWritePayload().value > TimeInterval.minutes(5).value) {
                     logger.debug("nextTaskForDevice (device={},task=writePayload,elapsed={})", device, device.timeIntervalSinceLastWritePayload());
                     return NextTask.writePayload;
                 }
+                // Write payload sharing data to iOS device if there is data to be shared (alternate between payload sharing and write RSSI)
+                final PayloadSharingData payloadSharingData = database.payloadSharingData(device);
+                if (device.operatingSystem() == BLEDeviceOperatingSystem.ios
+                        && payloadSharingData.data.value.length > 0
+                        && device.timeIntervalSinceLastWritePayloadSharing().value >= TimeInterval.seconds(15).value
+                        && device.timeIntervalSinceLastWritePayloadSharing().value >= device.timeIntervalSinceLastWriteRssi().value) {
+                    logger.debug("nextTaskForDevice (device={},task=writePayloadSharing,dataLength={},elapsed={})", device, payloadSharingData.data.value.length, device.timeIntervalSinceLastWritePayloadSharing());
+                    return NextTask.writePayloadSharing;
+                }
+                // Write RSSI as frequently as reasonable (alternate between write RSSI and write payload)
+                if (null != device.rssi() &&
+                        device.timeIntervalSinceLastWriteRssi().value >= TimeInterval.seconds(15).value &&
+                        (device.timeIntervalSinceLastWritePayload().value < BLESensorConfiguration.payloadDataUpdateTimeInterval.value
+                                || device.timeIntervalSinceLastWriteRssi().value >= device.timeIntervalSinceLastWritePayload().value)
+                ) {
+                    logger.debug("nextTaskForDevice (device={},task=writeRSSI,elapsed={})", device, device.timeIntervalSinceLastWriteRssi());
+                    return NextTask.writeRSSI;
+                }
+                // Write payload update if required
+                if (device.timeIntervalSinceLastWritePayload().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+                    logger.debug("nextTaskForDevice (device={},task=writePayloadUpdate,elapsed={})", device, device.timeIntervalSinceLastWritePayload());
+                    return NextTask.writePayload;
+                }
+            } else {
+                // Since v2.2 - Write our payload to iOS if needed (i.e. if they haven't detected us)
+                if (device.operatingSystem() == BLEDeviceOperatingSystem.ios) {
+                    final TimeInterval lastTime = device.timeIntervalSinceLastWritePayload();
+                    logger.debug("nextTaskForDevice, timeSinceLastWrite (device={},task=writePayload,elapsed={})", device, lastTime);
+                    // Don't forget the = to part! Because both can be never
+                    if (lastTime.value >= BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+                        logger.debug("nextTaskForDevice (device={},task=writePayload,elapsed={})", device, device.timeIntervalSinceLastWritePayload());
+                        return NextTask.writePayload;
+                    }
+                }
             }
-        }
-        // Write payload sharing data to iOS
-        if (device.operatingSystem() == BLEDeviceOperatingSystem.ios && !device.protocolIsOpenTrace()) {
-            // Write payload sharing data to iOS device if there is data to be shared
-            final PayloadSharingData payloadSharingData = database.payloadSharingData(device);
-            if (device.operatingSystem() == BLEDeviceOperatingSystem.ios
-                    && payloadSharingData.data.value.length > 0
-                    && device.timeIntervalSinceLastWritePayloadSharing().value >= TimeInterval.seconds(15).value) {
-                logger.debug("nextTaskForDevice (device={},task=writePayloadSharing,dataLength={},elapsed={})", device, payloadSharingData.data.value.length, device.timeIntervalSinceLastWritePayloadSharing());
-                return NextTask.writePayloadSharing;
+            // Write payload sharing data to iOS
+            if (device.operatingSystem() == BLEDeviceOperatingSystem.ios && !device.protocolIsOpenTrace()) {
+                // Write payload sharing data to iOS device if there is data to be shared
+                final PayloadSharingData payloadSharingData = database.payloadSharingData(device);
+                if (device.operatingSystem() == BLEDeviceOperatingSystem.ios
+                        && payloadSharingData.data.value.length > 0
+                        && device.timeIntervalSinceLastWritePayloadSharing().value >= TimeInterval.seconds(15).value) {
+                    logger.debug("nextTaskForDevice (device={},task=writePayloadSharing,dataLength={},elapsed={})", device, payloadSharingData.data.value.length, device.timeIntervalSinceLastWritePayloadSharing());
+                    return NextTask.writePayloadSharing;
+                }
             }
         }
         logger.debug("nextTaskForDevice (device={},task=nothing)",device);
@@ -1451,9 +1463,61 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                 device.immediateSendData(null); // remove data to ensure it gets sent
                 return;
             }
+            case writeV2Payload: {
+                // Write Herald Protocol V2 payload to target device
+                // Similar to writePayload above, but with V2 protocol packet segment wrapper
+                final PayloadData payloadData = transmitter.payloadData();
+                //noinspection ConstantConditions
+                if (null == payloadData || null == payloadData.value || 0 == payloadData.value.length) {
+                    logger.fault("nextTask failed (task=writeV2Payload,device={},reason=missingPayloadData)", device);
+                    gatt.disconnect();
+                    return; // => onConnectionStateChange
+                }
+                final Data data = HeraldProtocolV2.singlePayloadWrite(payloadData);
+                logger.debug("nextTask (task=writeV2Payload,device={},dataLength={})", device, data.value.length);
+                writeHeraldProtocolV2Characteristic(gatt, NextTask.writeV2Payload, data.value);
+                return;
+            }
         }
         logger.debug("nextTask (task=nothing,device={})", device);
         gatt.disconnect();
+    }
+
+    private void writeHeraldProtocolV2Characteristic(@NonNull final BluetoothGatt gatt, @NonNull final NextTask task, @NonNull final byte[] data) {
+        final BLEDevice device = database.device(gatt.getDevice());
+        final BluetoothGattCharacteristic heraldV2Characteristic = device.heraldProtocolV2Characteristic();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                logger.fault("writeHeraldProtocolV2Characteristic, no BLUETOOTH_CONNECT permission");
+                return;
+            }
+        }
+        if (null == heraldV2Characteristic) {
+            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2Characteristic)", task, device);
+            gatt.disconnect();
+            return;
+        }
+        //noinspection ConstantConditions
+        if (null == data || 0 == data.length) {
+            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=missingData)", task, device);
+            gatt.disconnect();
+            return;
+        }
+        heraldV2Characteristic.setValue(data);
+        heraldV2Characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+        bluetoothGattProxy.proxy(gatt);
+        if (!gatt.writeCharacteristic(heraldV2Characteristic)) {
+            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2CharacteristicFailed)", task, device);
+            gatt.disconnect();
+        } else {
+            logger.debug("writeHeraldProtocolV2Characteristic (task={},dataLength={},device={})", task, data.length, device);
+            // => onCharacteristicWrite
+            // Assume it succeeds with acknowledgement
+            if (task == NextTask.writeV2Payload) {
+                device.registerWritePayload();
+            }
+        }
     }
 
     private void writeSignalCharacteristic(@NonNull final BluetoothGatt gatt, @NonNull final NextTask task, @NonNull final byte[] data) {

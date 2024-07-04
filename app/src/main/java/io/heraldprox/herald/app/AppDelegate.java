@@ -74,6 +74,10 @@ public class AppDelegate extends Application implements SensorDelegate {
         NotificationService.shared(this).startForegroundService(this.getForegroundNotification(), NOTIFICATION_ID);
         // Initialise sensor array for given payload data supplier
         final PayloadDataSupplier payloadDataSupplier = new TestPayloadDataSupplier(identifier());
+
+        // Override sensor config defaults - Since v2.3 July 2024
+        BLESensorConfiguration.heraldProtocolV2Enabled = true; // Feature flag
+
         sensor = new SensorArray(getApplicationContext(), payloadDataSupplier);
         // Add appDelegate as listener for detection events for logging and start sensor
         sensor.add(this);

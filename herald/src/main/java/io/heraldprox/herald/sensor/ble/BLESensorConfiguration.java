@@ -1,4 +1,4 @@
-//  Copyright 2020-2021 Herald Project Contributors
+//  Copyright 2020-2024 Herald Project Contributors
 //  SPDX-License-Identifier: Apache-2.0
 //
 
@@ -64,6 +64,18 @@ public class BLESensorConfiguration {
     public static boolean standardHeraldServiceAdvertisingEnabled = true;
 
     /**
+     * Enables the Herald Protocol V1 support. Enabled by default. Can be used alongside V2 protocol.
+     * @since v2.3 July 2024
+     */
+    public static boolean heraldProtocolV1Enabled = true;
+
+    /**
+     * Enables the Herald Protocol V2 support. Disabled by default. Can be used alongside V1 protocol.
+     * @since v2.3 July 2024
+     */
+
+    public static boolean heraldProtocolV2Enabled = false;
+    /**
      * Signaling characteristic for controlling connection between peripheral and central, e.g. keep each other from suspend state
      * <br>- Characteristic UUID is randomly generated V4 UUIDs that has been tested for uniqueness by conducting web searches to ensure it returns no results.
      */
@@ -82,6 +94,13 @@ public class BLESensorConfiguration {
      */
     @NonNull
     public final static UUID payloadCharacteristicUUID = UUID.fromString("3e98c0f8-8f05-4829-a121-43e38f8933e7");
+
+    /**
+     * Support for Herald Protocol v2 (write with ack) data transfer mode. Can be enabled alongside existing V1 protocol.
+     * @since v2.3 July 2024
+     */
+    @NonNull
+    public final static UUID heraldProtocolV2CharacteristicUUID = UUID.fromString("136d8aa2-7072-437a-85fc-6104ed675bc0");
 
     // MARK:- Custom Service UUID interoperability - Since v2.2
     /**

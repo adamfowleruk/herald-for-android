@@ -1,4 +1,4 @@
-//  Copyright 2020-2021 Herald Project Contributors
+//  Copyright 2020-2024 Herald Project Contributors
 //  SPDX-License-Identifier: Apache-2.0
 //
 
@@ -46,6 +46,7 @@ import io.heraldprox.herald.sensor.datatype.Triple;
 import io.heraldprox.herald.sensor.PayloadDataSupplier;
 import io.heraldprox.herald.sensor.SensorDelegate;
 import io.heraldprox.herald.sensor.protocol.GPDMPLayer1BluetoothLEIncoming;
+import io.heraldprox.herald.sensor.protocol.HeraldProtocolV2;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -716,15 +717,122 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     return;
                 }
                 final Data data = new Data(onCharacteristicWriteSignalData(device, value));
-				if (characteristic.getUuid().equals(BLESensorConfiguration.interopOpenTracePayloadCharacteristicUUID)) {
-                    //noinspection ConstantConditions
-                    if (null == data.value) {
-				        return;
+
+                if (BLESensorConfiguration.heraldProtocolV2Enabled) {
+                    if (characteristic.getUuid().equals(BLESensorConfiguration.heraldProtocolV2CharacteristicUUID)) {
+                        // Herald Protocol V2 write received
+                        if (responseNeeded) { // should always be true if protocol is being respected
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                                    logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
+                                    return;
+                                }
+                            }
+                            server.get().sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value); // Write ACK
+
+                            //noinspection ConstantConditions
+                            if (null == data.value) {
+                                return;
+                            }
+                            final PayloadData payloadData = new PayloadData(data.value);
+                            logger.debug("BluetoothGattServerCallback, didReceiveV2Write (dataType=payload,central={},payload={})", targetDevice, payloadData);
+
+                            // Process the written data according to Herald Protocol V2
+                            // Parse actual 'payload write' data out of V2 protocol data before passing to this function
+                            final PayloadData extracted = HeraldProtocolV2.extractPayloadData(payloadData);
+                            if (null != extracted) {
+                                targetDevice.payloadData(extracted);
+                            }
+                        }
+                        return;
                     }
-                    final PayloadData payloadData = new PayloadData(data.value);
-                    logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
-                    targetDevice.payloadData(payloadData);
-                    onCharacteristicWriteSignalData.remove(device.getAddress());
+                }
+                if (BLESensorConfiguration.heraldProtocolV1Enabled) {
+                    if (characteristic.getUuid().equals(BLESensorConfiguration.interopOpenTracePayloadCharacteristicUUID)) {
+                        //noinspection ConstantConditions
+                        if (null == data.value) {
+                            return;
+                        }
+                        final PayloadData payloadData = new PayloadData(data.value);
+                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
+                        targetDevice.payloadData(payloadData);
+                        onCharacteristicWriteSignalData.remove(device.getAddress());
+                        if (responseNeeded) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                                    logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
+                                    return;
+                                }
+                            }
+                            server.get().sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+                        }
+                        return;
+                    }
+                    switch (SignalCharacteristicData.detect(data)) {
+                        case rssi: {
+                            final RSSI rssi = SignalCharacteristicData.decodeWriteRSSI(data);
+                            if (null == rssi) {
+                                logger.fault("BluetoothGattServerCallback, didReceiveWrite, invalid request (central={},action=writeRSSI)", targetDevice);
+                                break;
+                            }
+                            logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=rssi,central={},rssi={})", targetDevice, rssi);
+                            // Only receive-only Android devices write RSSI
+                            targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
+                            targetDevice.receiveOnly(true);
+                            targetDevice.rssi(rssi);
+                            break;
+                        }
+                        case payload: {
+                            final PayloadData payloadData = SignalCharacteristicData.decodeWritePayload(data);
+                            if (null == payloadData) {
+                                // Fragmented payload data may be incomplete
+                                break;
+                            }
+                            logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
+                            // Only receive-only Android devices write payload
+                            targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
+                            targetDevice.receiveOnly(true);
+                            targetDevice.payloadData(payloadData);
+                            onCharacteristicWriteSignalData.remove(device.getAddress());
+                            break;
+                        }
+                        case payloadSharing: {
+                            final PayloadSharingData payloadSharingData = SignalCharacteristicData.decodeWritePayloadSharing(data);
+                            if (null == payloadSharingData) {
+                                // Fragmented payload sharing data may be incomplete
+                                break;
+                            }
+                            final List<PayloadData> didSharePayloadData = payloadDataSupplier.payload(payloadSharingData.data);
+                            for (SensorDelegate delegate : delegates) {
+                                delegate.sensor(SensorType.BLE, didSharePayloadData, targetIdentifier);
+                            }
+                            // Only Android devices write payload sharing
+                            targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
+                            targetDevice.rssi(payloadSharingData.rssi);
+                            logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payloadSharing,central={},payloadSharingData={})", targetDevice, didSharePayloadData);
+                            for (final PayloadData payloadData : didSharePayloadData) {
+                                final BLEDevice sharedDevice = database.device(payloadData);
+                                sharedDevice.operatingSystem(BLEDeviceOperatingSystem.shared);
+                                sharedDevice.rssi(payloadSharingData.rssi);
+                            }
+                            break;
+                        }
+                        case immediateSend: {
+                            final ImmediateSendData immediateSendData = SignalCharacteristicData.decodeImmediateSend(data);
+                            if (null == immediateSendData) {
+                                // Fragmented immediate send data may be incomplete
+                                break;
+                            }
+
+                            // Immediate Send disabled for now so I can test GPDMP
+                            // for (SensorDelegate delegate : delegates) {
+                            //     delegate.sensor(SensorType.BLE, immediateSendData, targetIdentifier);
+                            // }
+                            // logger.debug("didReceiveWrite (dataType=immediateSend,central={},immediateSendData={})", targetDevice, immediateSendData.data);
+
+                            break;
+                        }
+                    }
                     if (responseNeeded) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -734,82 +842,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         }
                         server.get().sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
                     }
-                    return;
-                }
-                switch (SignalCharacteristicData.detect(data)) {
-                    case rssi: {
-                        final RSSI rssi = SignalCharacteristicData.decodeWriteRSSI(data);
-                        if (null == rssi) {
-                            logger.fault("BluetoothGattServerCallback, didReceiveWrite, invalid request (central={},action=writeRSSI)", targetDevice);
-                            break;
-                        }
-                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=rssi,central={},rssi={})", targetDevice, rssi);
-                        // Only receive-only Android devices write RSSI
-                        targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
-                        targetDevice.receiveOnly(true);
-                        targetDevice.rssi(rssi);
-                        break;
-                    }
-                    case payload: {
-                        final PayloadData payloadData = SignalCharacteristicData.decodeWritePayload(data);
-                        if (null == payloadData) {
-                            // Fragmented payload data may be incomplete
-                            break;
-                        }
-                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
-                        // Only receive-only Android devices write payload
-                        targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
-                        targetDevice.receiveOnly(true);
-                        targetDevice.payloadData(payloadData);
-                        onCharacteristicWriteSignalData.remove(device.getAddress());
-                        break;
-                    }
-                    case payloadSharing: {
-                        final PayloadSharingData payloadSharingData = SignalCharacteristicData.decodeWritePayloadSharing(data);
-                        if (null == payloadSharingData) {
-                            // Fragmented payload sharing data may be incomplete
-                            break;
-                        }
-                        final List<PayloadData> didSharePayloadData = payloadDataSupplier.payload(payloadSharingData.data);
-                        for (SensorDelegate delegate : delegates) {
-                            delegate.sensor(SensorType.BLE, didSharePayloadData, targetIdentifier);
-                        }
-                        // Only Android devices write payload sharing
-                        targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
-                        targetDevice.rssi(payloadSharingData.rssi);
-                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payloadSharing,central={},payloadSharingData={})", targetDevice, didSharePayloadData);
-                        for (final PayloadData payloadData : didSharePayloadData) {
-                            final BLEDevice sharedDevice = database.device(payloadData);
-                            sharedDevice.operatingSystem(BLEDeviceOperatingSystem.shared);
-                            sharedDevice.rssi(payloadSharingData.rssi);
-                        }
-                        break;
-                    }
-                    case immediateSend: {
-                        final ImmediateSendData immediateSendData = SignalCharacteristicData.decodeImmediateSend(data);
-                        if (null == immediateSendData) {
-                            // Fragmented immediate send data may be incomplete
-                            break;
-                        }
-
-                        // Immediate Send disabled for now so I can test GPDMP
-                        // for (SensorDelegate delegate : delegates) {
-                        //     delegate.sensor(SensorType.BLE, immediateSendData, targetIdentifier);
-                        // }
-                        // logger.debug("didReceiveWrite (dataType=immediateSend,central={},immediateSendData={})", targetDevice, immediateSendData.data);
-
-                        break;
-                    }
-                }
-                if (responseNeeded) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                            logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
-                            return;
-                        }
-                    }
-                    server.get().sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
-                }
+                } // End Herald Protocol V1 if
             }
 
             @Override
@@ -896,16 +929,20 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
         }
 
         final BluetoothGattService service = new BluetoothGattService(ourAdvertisedId, BluetoothGattService.SERVICE_TYPE_PRIMARY);
-        final BluetoothGattCharacteristic signalCharacteristic = new BluetoothGattCharacteristic(
-                BLESensorConfiguration.androidSignalCharacteristicUUID,
-                BluetoothGattCharacteristic.PROPERTY_WRITE,
-                BluetoothGattCharacteristic.PERMISSION_WRITE);
-        signalCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-        final BluetoothGattCharacteristic payloadCharacteristic = new BluetoothGattCharacteristic(
-                BLESensorConfiguration.payloadCharacteristicUUID,
-                BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_READ);
-        service.addCharacteristic(signalCharacteristic);
+        // Herald Protocol V1 enabled check. Since July 2024
+        if (BLESensorConfiguration.heraldProtocolV1Enabled) {
+            final BluetoothGattCharacteristic signalCharacteristic = new BluetoothGattCharacteristic(
+                    BLESensorConfiguration.androidSignalCharacteristicUUID,
+                    BluetoothGattCharacteristic.PROPERTY_WRITE,
+                    BluetoothGattCharacteristic.PERMISSION_WRITE);
+            signalCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            service.addCharacteristic(signalCharacteristic);
+            final BluetoothGattCharacteristic payloadCharacteristic = new BluetoothGattCharacteristic(
+                    BLESensorConfiguration.payloadCharacteristicUUID,
+                    BluetoothGattCharacteristic.PROPERTY_READ,
+                    BluetoothGattCharacteristic.PERMISSION_READ);
+            service.addCharacteristic(payloadCharacteristic);
+        }
         // Interop with OpenTrace protocol
 		if (BLESensorConfiguration.interopOpenTraceEnabled) {
 			final BluetoothGattCharacteristic legacyPayloadCharacteristic = new BluetoothGattCharacteristic(
@@ -914,7 +951,15 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     BluetoothGattCharacteristic.PERMISSION_READ | BluetoothGattCharacteristic.PERMISSION_WRITE);
         	service.addCharacteristic(legacyPayloadCharacteristic);
 		}
-        service.addCharacteristic(payloadCharacteristic);
+        // New Herald Protocol V2 - Write based - Since July 2024
+        if (BLESensorConfiguration.heraldProtocolV2Enabled) {
+            final BluetoothGattCharacteristic heraldProtocolV2Characteristic = new BluetoothGattCharacteristic(
+                    BLESensorConfiguration.heraldProtocolV2CharacteristicUUID,
+                    BluetoothGattCharacteristic.PROPERTY_WRITE,
+                    BluetoothGattCharacteristic.PERMISSION_WRITE);
+            heraldProtocolV2Characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT); // Write with response
+            service.addCharacteristic(heraldProtocolV2Characteristic);
+        }
         bluetoothGattServer.addService(service);
 
         // Logic check - ensure there can be only one Herald service
@@ -933,8 +978,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             logger.fault("setGattService couldn't list Herald services after setting! Should be advertising now (or soon...).");
         }
 
-        logger.debug("setGattService successful (service={},signalCharacteristic={},payloadCharacteristic={})",
-                service.getUuid(), signalCharacteristic.getUuid(), payloadCharacteristic.getUuid());
+        logger.debug("setGattService successful (service={})", service.getUuid());
     }
 
     @NonNull
