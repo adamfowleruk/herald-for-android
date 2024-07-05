@@ -54,10 +54,10 @@ public class HeraldProtocolV2 {
             return null;
         }
         // Check first value
-        if (!PROTOCOL_VERSION_HERALD_V2_0.equals(rawHeraldV2Payload.uint8(0))) {
+        if (PROTOCOL_VERSION_HERALD_V2_0.value!=rawHeraldV2Payload.uint8(0).value) {
             return null;
         }
-        if (ACTION_SINGLE_PAYLOAD_WRITE_ARBITRARY.equals(rawHeraldV2Payload.uint8(1))) {
+        if (ACTION_SINGLE_PAYLOAD_WRITE_ARBITRARY.value==rawHeraldV2Payload.uint8(1).value) {
             PayloadData pd = new PayloadData();
             pd.append(rawHeraldV2Payload.subdata(2));
             return pd;

@@ -67,6 +67,8 @@ public class BLEDevice extends Device {
     @Nullable
     private ScanRecord scanRecord = null;
 
+    private boolean requestedWrite = false;
+
     // BLE characteristics
     @Nullable
     private BluetoothGattCharacteristic signalCharacteristic = null;
@@ -453,7 +455,7 @@ public class BLEDevice extends Device {
     }
 
     public boolean protocolIsHerald() {
-        return null != signalCharacteristic && null != payloadCharacteristic && null != heraldProtocolV2Characteristic;
+        return (null != signalCharacteristic && null != payloadCharacteristic) || null != heraldProtocolV2Characteristic;
     }
 
     public void scanRecord(@Nullable final ScanRecord scanRecord) {
@@ -491,5 +493,13 @@ public class BLEDevice extends Device {
         if (changed) {
             delegate.device(this, meta);
         }
+    }
+
+    public void requestedPayloadWrite(boolean haveDoneSo) {
+        this.requestedWrite = haveDoneSo;
+    }
+
+    public boolean haveRequestedPayloadWrite() {
+        return this.requestedWrite;
     }
 }

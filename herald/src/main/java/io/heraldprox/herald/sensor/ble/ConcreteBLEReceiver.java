@@ -136,7 +136,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
 
     private enum NextTask {
         nothing, readPayload, writePayload, writeRSSI, writePayloadSharing, immediateSend,
-        readModel, readDeviceName, writeV2Payload
+        readModel, readDeviceName, writeV2Payload, discoverServices
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -642,6 +642,8 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                 if (device.operatingSystem() == BLEDeviceOperatingSystem.unknown) {
                     device.operatingSystem(BLEDeviceOperatingSystem.ios_tbc);
                 }
+            } else if (BLESensorConfiguration.heraldProtocolV2Enabled) {
+                // No op - leave as ios_tbc or android_tbc
             } else if (BLESensorConfiguration.interopAdvertBasedProtocolEnabled) {
                 // Sensor service not found + Manufacturer not Apple should be impossible
                 // as we are scanning for devices with sensor service or Apple device.
@@ -1023,7 +1025,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         }
         // Train device filter
         if (BLESensorConfiguration.deviceFilterTrainingEnabled) {
-            deviceFilter.train(device, null == device.payloadCharacteristic());
+            deviceFilter.train(device, null == device.payloadCharacteristic() && null == device.heraldProtocolV2Characteristic());
         }
         return success;
     }
@@ -1135,7 +1137,15 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
 	                } else if (device.operatingSystem() == BLEDeviceOperatingSystem.ios_tbc) {
 	                    device.operatingSystem(BLEDeviceOperatingSystem.ios);
 	                }
-				}
+				} else if (characteristic.getUuid().equals(BLESensorConfiguration.heraldProtocolV2CharacteristicUUID)) {
+                    logger.debug("onServicesDiscovered, ProtV2 found herald protocol v2 characteristic (device={})", device);
+                    device.heraldProtocolV2Characteristic(characteristic);
+                    if (device.operatingSystem() == BLEDeviceOperatingSystem.android_tbc) {
+                        device.operatingSystem(BLEDeviceOperatingSystem.android);
+                    } else if (device.operatingSystem() == BLEDeviceOperatingSystem.ios_tbc) {
+                        device.operatingSystem(BLEDeviceOperatingSystem.ios);
+                    }
+                }
             }
             // Copy legacy payload characteristic to payload characteristic if null
             if (null == device.payloadCharacteristic() && null != device.legacyPayloadCharacteristic()) {
@@ -1230,10 +1240,21 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             return NextTask.readDeviceName;
         }
         if (BLESensorConfiguration.heraldProtocolV2Enabled) {
+            logger.debug("nextTaskForDevice (device={},ProtV2v2ProtocolCheck",device);
+            // Performs characteristic discovery
+            if (null == device.heraldProtocolV2Characteristic()) { // i.e. not char discovery yet
+                if (device.operatingSystem() == BLEDeviceOperatingSystem.unknown ||
+                        device.operatingSystem() == BLEDeviceOperatingSystem.ios_tbc ||
+                        device.operatingSystem() == BLEDeviceOperatingSystem.android_tbc) {
+                    logger.debug("nextTaskForDevice (device={},task=writeV2Payload|OS)", device);
+                    return NextTask.discoverServices;
+                }
+            }
             // Herald Protocol V2 specific logic - Since v2.3 July 2024
-            // TODO may need logic to separate (Application) 'payload' written and any Herald Protocol V2 internal info being written
-            if (device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
-                logger.debug("nextTaskForDevice (device={},task=writeV2Payload,timeIntervalSinceLastUpdate={})", device, device.timeIntervalSinceLastPayloadDataUpdate());
+            if ( !device.haveRequestedPayloadWrite() ||
+                device.timeIntervalSinceLastPayloadDataUpdate().value > BLESensorConfiguration.payloadDataUpdateTimeInterval.value) {
+                logger.debug("nextTaskForDevice (device={},task=ProtV2writeV2Payload,haveRequested={},timeIntervalSinceLastUpdate={})",
+                        device, device.haveRequestedPayloadWrite(), device.timeIntervalSinceLastPayloadDataUpdate());
                 return NextTask.writeV2Payload;
             }
         }
@@ -1463,19 +1484,40 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                 device.immediateSendData(null); // remove data to ensure it gets sent
                 return;
             }
+            case discoverServices: {
+                logger.debug("nextTask (task=ProtV2discoverServices,device={})", device);
+                taskConnectDevice(device); // performs discovery
+                return; // => onConnectionStateChange
+            }
             case writeV2Payload: {
+                logger.debug("nextTask (task=ProtV2writeV2Payload,device={})", device);
+                final BluetoothGattCharacteristic v2char = device.heraldProtocolV2Characteristic();
+                if (null == v2char) {
+                    logger.fault("nextTask failed (task=ProtV2writeV2Payload,device={},reason=missingV2Characteristic)", device);
+//                    taskConnectDevice(device); // performs discovery
+                    gatt.disconnect();
+                    return; // => onConnectionStateChange
+                }
+
+//              // proxy gatt to carry out characteristic discovery - also stops CVE-2020-12856
+//                bluetoothGattProxy.proxy(gatt);
+                // Proxying done immediately before write
+
                 // Write Herald Protocol V2 payload to target device
                 // Similar to writePayload above, but with V2 protocol packet segment wrapper
                 final PayloadData payloadData = transmitter.payloadData();
                 //noinspection ConstantConditions
                 if (null == payloadData || null == payloadData.value || 0 == payloadData.value.length) {
-                    logger.fault("nextTask failed (task=writeV2Payload,device={},reason=missingPayloadData)", device);
+                    logger.fault("nextTask failed (task=ProtV2writeV2Payload,device={},reason=missingPayloadData)", device);
                     gatt.disconnect();
                     return; // => onConnectionStateChange
                 }
+
                 final Data data = HeraldProtocolV2.singlePayloadWrite(payloadData);
-                logger.debug("nextTask (task=writeV2Payload,device={},dataLength={})", device, data.value.length);
+                logger.debug("nextTask (task=ProtV2writeV2Payload,device={},dataLength={})", device, data.value.length);
                 writeHeraldProtocolV2Characteristic(gatt, NextTask.writeV2Payload, data.value);
+
+                device.requestedPayloadWrite(true);
                 return;
             }
         }
@@ -1489,18 +1531,18 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                logger.fault("writeHeraldProtocolV2Characteristic, no BLUETOOTH_CONNECT permission");
+                logger.fault("ProtV2writeHeraldProtocolV2Characteristic, no BLUETOOTH_CONNECT permission");
                 return;
             }
         }
         if (null == heraldV2Characteristic) {
-            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2Characteristic)", task, device);
+            logger.fault("ProtV2writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2Characteristic)", task, device);
             gatt.disconnect();
             return;
         }
         //noinspection ConstantConditions
         if (null == data || 0 == data.length) {
-            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=missingData)", task, device);
+            logger.fault("ProtV2writeHeraldProtocolV2Characteristic failed (task={},device={},reason=missingData)", task, device);
             gatt.disconnect();
             return;
         }
@@ -1508,10 +1550,10 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         heraldV2Characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         bluetoothGattProxy.proxy(gatt);
         if (!gatt.writeCharacteristic(heraldV2Characteristic)) {
-            logger.fault("writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2CharacteristicFailed)", task, device);
+            logger.fault("ProtV2writeHeraldProtocolV2Characteristic failed (task={},device={},reason=writeHeraldProtocolV2CharacteristicFailed)", task, device);
             gatt.disconnect();
         } else {
-            logger.debug("writeHeraldProtocolV2Characteristic (task={},dataLength={},device={})", task, data.length, device);
+            logger.debug("ProtV2writeHeraldProtocolV2Characteristic (task={},dataLength={},device={})", task, data.length, device);
             // => onCharacteristicWrite
             // Assume it succeeds with acknowledgement
             if (task == NextTask.writeV2Payload) {

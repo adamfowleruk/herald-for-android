@@ -655,6 +655,23 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                 return data;
             }
 
+            @NonNull
+            private byte[] onCharacteristicWriteHeraldV2Data(@NonNull final BluetoothDevice device, @Nullable final byte[] value) {
+                logger.debug("BluetoothGattServerCallback, onCharacteristicWriteHeraldV2Data");
+                final String key = device.getAddress();
+                byte[] partialData = onCharacteristicWriteSignalData.get(key);
+                if (null == partialData) {
+                    partialData = new byte[0];
+                }
+                final byte[] data = new byte[partialData.length + (null == value ? 0 : value.length)];
+                System.arraycopy(partialData, 0, data, 0, partialData.length);
+                if (value != null) {
+                    System.arraycopy(value, 0, data, partialData.length, value.length);
+                }
+                onCharacteristicWriteSignalData.put(key, data);
+                return data;
+            }
+
             private void removeData(@NonNull final BluetoothDevice device) {
                 logger.debug("BluetoothGattServerCallback, removeData");
                 final String deviceAddress = device.getAddress();
@@ -704,22 +721,11 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         (characteristic.getUuid().equals(BLESensorConfiguration.androidSignalCharacteristicUUID) ? "signal" : "unknown"),
                         (null != value ? value.length : "null")
                 );
-                if (characteristic.getUuid() != BLESensorConfiguration.androidSignalCharacteristicUUID) {
-                    if (responseNeeded) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                                logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
-                                return;
-                            }
-                        }
-                        server.get().sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, offset, value);
-                    }
-                    return;
-                }
-                final Data data = new Data(onCharacteristicWriteSignalData(device, value));
 
                 if (BLESensorConfiguration.heraldProtocolV2Enabled) {
                     if (characteristic.getUuid().equals(BLESensorConfiguration.heraldProtocolV2CharacteristicUUID)) {
+                        logger.debug("BluetoothGattServerCallback, didReceiveV2Write");
+                        Data data = new Data(value);
                         // Herald Protocol V2 write received
                         if (responseNeeded) { // should always be true if protocol is being respected
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -735,11 +741,16 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                                 return;
                             }
                             final PayloadData payloadData = new PayloadData(data.value);
-                            logger.debug("BluetoothGattServerCallback, didReceiveV2Write (dataType=payload,central={},payload={})", targetDevice, payloadData);
+                            logger.debug("BluetoothGattServerCallback, didReceiveV2Write (dataType=payload,central={},payload={},payloadHex={})",
+                                    targetDevice, payloadData, payloadData.hexEncodedString());
+                            logger.debug("BluetoothGattServerCallback, didReceiveV2Write (byte1={},byte2={},byte3={})",
+                                payloadData.uint8(0).value,payloadData.uint8(1).value,payloadData.uint8(2).value);
 
                             // Process the written data according to Herald Protocol V2
                             // Parse actual 'payload write' data out of V2 protocol data before passing to this function
                             final PayloadData extracted = HeraldProtocolV2.extractPayloadData(payloadData);
+                            logger.debug("BluetoothGattServerCallback, didReceiveV2Write (extracted={})", extracted);
+
                             if (null != extracted) {
                                 targetDevice.payloadData(extracted);
                             }
@@ -747,7 +758,24 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         return;
                     }
                 }
+
+                if (characteristic.getUuid() != BLESensorConfiguration.androidSignalCharacteristicUUID) {
+                    if (responseNeeded) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                                logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
+                                return;
+                            }
+                        }
+                        server.get().sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, offset, value);
+                    }
+                    return;
+                }
+
                 if (BLESensorConfiguration.heraldProtocolV1Enabled) {
+
+                    final Data data = new Data(onCharacteristicWriteSignalData(device, value));
+
                     if (characteristic.getUuid().equals(BLESensorConfiguration.interopOpenTracePayloadCharacteristicUUID)) {
                         //noinspection ConstantConditions
                         if (null == data.value) {
