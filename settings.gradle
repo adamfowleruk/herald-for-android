@@ -1,3 +1,10 @@
+//  Copyright 2020-2026 Herald Project Contributors
+//  SPDX-License-Identifier: Apache-2.0
+//
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
 include ':herald'
 include ':app'
 rootProject.name = "Herald-for-Android"
