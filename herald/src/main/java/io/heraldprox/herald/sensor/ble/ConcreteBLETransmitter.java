@@ -69,7 +69,7 @@ import static android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_A
 public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateManagerDelegate {
     private final SensorLogger logger = new ConcreteSensorLogger("Sensor", "BLE.ConcreteBLETransmitter");
     private final static long advertOffDurationMillis = TimeInterval.seconds(2).millis();
-    private final static long advertOnDurationMillis = TimeInterval.seconds(5).millis();
+    private final static long advertOnDurationMillis = TimeInterval.seconds(150).millis();
     @NonNull
     private final Context context;
     @NonNull
@@ -262,7 +262,8 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                                         (null == bluetoothGattServer.getService(BLESensorConfiguration.customServiceUUID) ||
                                         null == bluetoothGattServer.getService(BLESensorConfiguration.customServiceUUID).getCharacteristics() ||
                                         0 == bluetoothGattServer.getService(BLESensorConfiguration.customServiceUUID).getCharacteristics().size())
-                                ) ||
+                                )
+                                ||
                                 (!BLESensorConfiguration.customServiceAdvertisingEnabled &&
                                         (null == bluetoothGattServer.getService(BLESensorConfiguration.linuxFoundationServiceUUID) ||
                                         null == bluetoothGattServer.getService(BLESensorConfiguration.linuxFoundationServiceUUID).getCharacteristics() ||
@@ -386,6 +387,17 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
 //                    healthCheck();
                     break;
                 }
+
+                // Since v2.3 ensure we don't advertise forever
+                case started: {
+                    final long period = timeSincelastStateChange(now);
+                    if (period >= advertOnDurationMillis) {
+                        logger.debug("advertLoopTask, bleTimer, stop advert (advert={}ms)", period);
+                        doStop(now,false); // was true in desk test. To be verified
+                    }
+                    break;
+                }
+
                 // Since v2.1, don't try to be cleverer than Android and hard fix the advert period to 15 minutes
 //                case started: {
 //                    final long period = timeSincelastStateChange(now);
@@ -693,6 +705,16 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         (BluetoothGatt.GATT_SUCCESS == status),
                         service.getUuid().toString()
                 );
+                int count = -1;
+                if (null != bluetoothGattServer) {
+                    List<BluetoothGattService> services = bluetoothGattServer.getServices();
+                    for (final BluetoothGattService svc : services) {
+                        if (svc.getUuid().equals(service)) {
+                            count++;
+                        }
+                    }
+                }
+                logger.debug("BluetoothGattServerCallback, serviceAdded, confirmed service ia advertising (service={},count={}) (-1 means gatt server is null)", service.getUuid(), count);
             }
 
             @Override
@@ -943,11 +965,14 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             ourAdvertisedId = BLESensorConfiguration.customServiceUUID;
         }
         BluetoothGattService ourService = bluetoothGattServer.getService(ourAdvertisedId);
-        if (null != ourService) {
+        // Added in V2.3 to prevent duplicate service adverts - some without characteristics set - in case of async call to setGattService
+        while (null != ourService) {
             // Service is already advertised, so remove it
             logger.debug("setGattService clearing single service for Herald (NOT calling clearServices())");
             boolean success = bluetoothGattServer.removeService(ourService);
             logger.debug("setGattService clearing single service result (successful={})",success);
+            // fetch another instance (if it exists)
+            ourService = bluetoothGattServer.getService(ourAdvertisedId);
         }
 
         // Logic check - ensure there are now no Gatt Services
@@ -1003,10 +1028,10 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
         }
         if (0 == count) {
             // Note that the service will probably not be listed yet - updating the advert is asynchronous
-            logger.fault("setGattService couldn't list Herald services after setting! Should be advertising now (or soon...).");
+            logger.fault("setGattService couldn't list Herald services after setting! Should be soon (via serviceAdded event)");
         }
 
-        logger.debug("setGattService successful (service={})", service.getUuid());
+        logger.debug("setGattService successful (service={},count={})", service.getUuid(), count);
     }
 
     @NonNull

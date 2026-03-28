@@ -13,6 +13,7 @@ import org.apache.commons.math3.analysis.polynomials.PolynomialFunction;
 import org.apache.commons.math3.analysis.UnivariateFunction;
 import org.apache.commons.math3.analysis.solvers.LaguerreSolver;
 import org.apache.commons.math3.complex.Complex;
+import org.apache.commons.math3.exception.NoDataException;
 import org.apache.commons.math3.fitting.PolynomialCurveFitter;
 import org.apache.commons.math3.fitting.WeightedObservedPoints;
 
@@ -141,113 +142,127 @@ public class PolynomialProxemicsCalibration implements Calibrator {
         // Use the point with maximum frequency as the initial point
         // Then solve for all complex roots
         LaguerreSolver solver = new LaguerreSolver();
-        Complex[] allRoots = solver.solveAllComplex(derivative.getCoefficients(),mostFrequent.a.doubleValue());
-
-        // Just take the approximate real value as the turning points
-
-        // Now take the second derivative and determine the gradient (f''(x)) at these locations
-        PolynomialFunction secondDerivative = derivative.polynomialDerivative(); // f''(x)
-        double firstMaximaX = -1;
-        double secondMaximaX = -1;
-        double thirdMaximaX = -1;
-        double firstMaximaXi = -1;
-        double secondMaximaXi = -1;
-        double thirdMaximaXi = -1;
-        int numMaxima = 0;
-        // Note: allRoots guaranteed to be in ascending order of X by Commons Math library
-        for (Complex root: allRoots) {
-            double turningPointAspect = secondDerivative.value(root.getReal());
-            if (turningPointAspect < 0) { // is a local MAXIMA (i.e. peak) not minima (i.e. trough)
-                // local Maxima - one of our peaks!
-                // Note: We store their real part only, as the closest estimate to X (i.e. Cr) possible
-                if (firstMaximaX < 0) {
-                    firstMaximaX = root.getReal();
-                    firstMaximaXi = root.getImaginary();
-                    numMaxima = 1;
-                } else if (secondMaximaX < 0) {
-                    secondMaximaX = root.getReal();
-                    secondMaximaXi = root.getImaginary();
-                    numMaxima = 2;
-                } else if (thirdMaximaX < 0) {
-                    thirdMaximaX = root.getReal();
-                    thirdMaximaXi = root.getImaginary();
-                    numMaxima = 3;
-                }
-            }
-        }
-        System.out.print("We have " + numMaxima + " local maxima peaks");
-        if (numMaxima < 2) {
-            System.out.println("Not enough peaks in calibration. Skipping.");
+        double[] coefs = derivative.getCoefficients();
+        if (null == coefs || coefs.length == 0) {
+            // Prevents some of:-
+//            org.apache.commons.math3.exception.NoDataException: polynomial
+//            at org.apache.commons.math3.analysis.solvers.LaguerreSolver$ComplexSolver.solveAll(LaguerreSolver.java:330)
+//            at org.apache.commons.math3.analysis.solvers.LaguerreSolver.solveAllComplex(LaguerreSolver.java:227)
+//            at org.apache.commons.math3.analysis.solvers.LaguerreSolver.solveAllComplex(LaguerreSolver.java:197)
+//            at io.heraldprox.herald.sensor.analysis.evaluation.PolynomialProxemicsCalibration.updateCalibration(PolynomialProxemicsCalibration.java:144)
+//            at io.heraldprox.herald.sensor.analysis.evaluation.ProxemicsSelfCalibrationAnalyser.update(ProxemicsSelfCalibrationAnalyser.java:89)
             return;
         }
-        maximaPeakXValues = new double[numMaxima];
-        // Yes there is a better way to do this - but I'm tired, so am prioritising accuracy and ease of reading over generalisability
-        for (int i = 0;i < numMaxima;i++) {
-            if (0 == i) {
-                maximaPeakXValues[i] = firstMaximaX;
-            } else if (1 == i) {
-                maximaPeakXValues[i] = secondMaximaX;
-            } else if (2 == i) {
-                maximaPeakXValues[i] = thirdMaximaX;
+        try {
+            Complex[] allRoots = solver.solveAllComplex(coefs, mostFrequent.a.doubleValue());
+
+            // Just take the approximate real value as the turning points
+
+            // Now take the second derivative and determine the gradient (f''(x)) at these locations
+            PolynomialFunction secondDerivative = derivative.polynomialDerivative(); // f''(x)
+            double firstMaximaX = -1;
+            double secondMaximaX = -1;
+            double thirdMaximaX = -1;
+            double firstMaximaXi = -1;
+            double secondMaximaXi = -1;
+            double thirdMaximaXi = -1;
+            int numMaxima = 0;
+            // Note: allRoots guaranteed to be in ascending order of X by Commons Math library
+            for (Complex root : allRoots) {
+                double turningPointAspect = secondDerivative.value(root.getReal());
+                if (turningPointAspect < 0) { // is a local MAXIMA (i.e. peak) not minima (i.e. trough)
+                    // local Maxima - one of our peaks!
+                    // Note: We store their real part only, as the closest estimate to X (i.e. Cr) possible
+                    if (firstMaximaX < 0) {
+                        firstMaximaX = root.getReal();
+                        firstMaximaXi = root.getImaginary();
+                        numMaxima = 1;
+                    } else if (secondMaximaX < 0) {
+                        secondMaximaX = root.getReal();
+                        secondMaximaXi = root.getImaginary();
+                        numMaxima = 2;
+                    } else if (thirdMaximaX < 0) {
+                        thirdMaximaX = root.getReal();
+                        thirdMaximaXi = root.getImaginary();
+                        numMaxima = 3;
+                    }
+                }
             }
+            System.out.print("We have " + numMaxima + " local maxima peaks");
+            if (numMaxima < 2) {
+                System.out.println("Not enough peaks in calibration. Skipping.");
+                return;
+            }
+            maximaPeakXValues = new double[numMaxima];
+            // Yes there is a better way to do this - but I'm tired, so am prioritising accuracy and ease of reading over generalisability
+            for (int i = 0; i < numMaxima; i++) {
+                if (0 == i) {
+                    maximaPeakXValues[i] = firstMaximaX;
+                } else if (1 == i) {
+                    maximaPeakXValues[i] = secondMaximaX;
+                } else if (2 == i) {
+                    maximaPeakXValues[i] = thirdMaximaX;
+                }
+            }
+
+            // Now calculate the linear scaling values
+            double firstY = calibration.value(firstMaximaX);
+            double secondY = calibration.value(secondMaximaX);
+            double thirdY = calibration.value(thirdMaximaX);
+            double dY = secondY - firstY;
+            double dX = secondMaximaX - firstMaximaX;
+            double m = dY / dX;
+            double c = firstY - (firstMaximaX * m);
+
+            double xForYEqualToZero = -c / m;
+
+            // C. USE PEAKS' X VALUES TO CREATE A LINEAR SCALE TO MODIFY RSSI CORRECTED FOR TxPower TO EXPECTED SIGNAL STRENGTH VALUES
+
+            // We need the reference values for expected RSSI at these proxemic distances
+            // Let us assume for now those distances are Centred from Hall (likely less than these):-
+            double dIntimate = 0.23;
+            double dPersonal = 0.84;
+            double dSocial = 2.46;
+            double dPublic = 5.65;
+
+            // What should the expected corrected receiver gain be for these distances?
+            double bluetoothMeanAdvertisingFrequency = Math.pow(10, 6) * (2402 + 2426 + 2480) / 3.0; // MHz
+            double cInAir = 299702547; // m/s
+            // Assume a receiver gain of 0 dBm
+            double constant = 4.0 * Math.PI * cInAir;
+            // 0.64681038792082243787704755070941 = freq / constant
+            // dPers expected Cr with no receiver gain = 2.2700459980820801481720385561334
+            // dSocial expected Cr with no receiver gain = 11.603162418912029519841172489154
+            // Note: Above are both positive and increasing because we've inverted the scale axis, unlike negative RSSI values
+            double expCrPersonal = -20 * Math.log(bluetoothMeanAdvertisingFrequency / (constant * dPersonal));
+            double expCrSocial = -20 * Math.log(bluetoothMeanAdvertisingFrequency / (constant * dSocial));
+
+            double offsetX = expCrPersonal - firstMaximaX;
+            double scaleX = (expCrSocial - expCrPersonal) / (secondMaximaX - firstMaximaX);
+            if (scaleX > 0) {
+                // sanity check
+                linearOffsetX = offsetX;
+                linearScaleX = scaleX;
+            }
+            // Note: Whilst scaleX should be 1.0, the attenuation of a phone position may have non linear effects. (i.e. 10% loss of signal strength rather than fixed value)
+
+            // E. CALCULATE ESTIMATE FOR RECEIVER GAIN BASED ON THIS TOO (ALTHOUGH NOT USED IN CALIBRATION)
+            // This is the value of xForYEqualToZero, scaled into the real signal strength cartesian realm
+            double receiverGainEstimate = xForYEqualToZero * scaleX;
+
+            // TODO Now report calibration values to the text file
+            calibrationsFile.write(toInclusive.toString() + ",polynomial," +
+                    "firstMaximaX=" + firstMaximaX + ":firstMaximaXi=" + firstMaximaXi +
+                    ":secondMaximaX=" + secondMaximaX + ":secondMaximaXi=" + secondMaximaXi +
+                    ":thirdMaximaX=" + thirdMaximaX + ":thirdMaximaXi=" + thirdMaximaXi +
+                    ":firstMaximaY=" + firstY +
+                    ":secondMaximaY=" + secondY +
+                    ":thirdMaximaY=" + thirdY +
+                    ":offsetX=" + offsetX + ":scaleX=" + scaleX
+            );
+        } catch (NoDataException nde) {
+            System.out.println("NoDataException in polynomial. Skipping this analysis.");
         }
-
-        // Now calculate the linear scaling values
-        double firstY = calibration.value(firstMaximaX);
-        double secondY = calibration.value(secondMaximaX);
-        double thirdY = calibration.value(thirdMaximaX);
-        double dY = secondY - firstY;
-        double dX = secondMaximaX - firstMaximaX;
-        double m = dY/dX;
-        double c = firstY - (firstMaximaX * m);
-
-        double xForYEqualToZero = -c / m;
-
-        // C. USE PEAKS' X VALUES TO CREATE A LINEAR SCALE TO MODIFY RSSI CORRECTED FOR TxPower TO EXPECTED SIGNAL STRENGTH VALUES
-
-        // We need the reference values for expected RSSI at these proxemic distances
-        // Let us assume for now those distances are Centred from Hall (likely less than these):-
-        double dIntimate = 0.23;
-        double dPersonal = 0.84;
-        double dSocial = 2.46;
-        double dPublic = 5.65;
-
-        // What should the expected corrected receiver gain be for these distances?
-        double bluetoothMeanAdvertisingFrequency = Math.pow(10,6) * (2402 + 2426 + 2480) / 3.0; // MHz
-        double cInAir = 299702547; // m/s
-        // Assume a receiver gain of 0 dBm
-        double constant = 4.0 * Math.PI * cInAir;
-        // 0.64681038792082243787704755070941 = freq / constant
-        // dPers expected Cr with no receiver gain = 2.2700459980820801481720385561334
-        // dSocial expected Cr with no receiver gain = 11.603162418912029519841172489154
-        // Note: Above are both positive and increasing because we've inverted the scale axis, unlike negative RSSI values
-        double expCrPersonal = -20*Math.log(bluetoothMeanAdvertisingFrequency / (constant * dPersonal));
-        double expCrSocial = -20*Math.log(bluetoothMeanAdvertisingFrequency / (constant * dSocial));
-
-        double offsetX = expCrPersonal - firstMaximaX;
-        double scaleX = (expCrSocial - expCrPersonal) / (secondMaximaX - firstMaximaX);
-        if (scaleX > 0) {
-            // sanity check
-            linearOffsetX = offsetX;
-            linearScaleX = scaleX;
-        }
-        // Note: Whilst scaleX should be 1.0, the attenuation of a phone position may have non linear effects. (i.e. 10% loss of signal strength rather than fixed value)
-
-        // E. CALCULATE ESTIMATE FOR RECEIVER GAIN BASED ON THIS TOO (ALTHOUGH NOT USED IN CALIBRATION)
-        // This is the value of xForYEqualToZero, scaled into the real signal strength cartesian realm
-        double receiverGainEstimate = xForYEqualToZero * scaleX;
-
-        // TODO Now report calibration values to the text file
-        calibrationsFile.write(toInclusive.toString() + ",polynomial," +
-                "firstMaximaX=" + firstMaximaX + ":firstMaximaXi=" + firstMaximaXi +
-                ":secondMaximaX=" + secondMaximaX + ":secondMaximaXi=" + secondMaximaXi +
-                ":thirdMaximaX=" + thirdMaximaX + ":thirdMaximaXi=" + thirdMaximaXi +
-                ":firstMaximaY=" + firstY +
-                ":secondMaximaY=" + secondY +
-                ":thirdMaximaY=" + thirdY +
-                ":offsetX=" + offsetX + ":scaleX=" + scaleX
-        );
-
     }
 
     @Override

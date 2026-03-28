@@ -76,8 +76,8 @@ public class AppDelegate extends Application implements SensorDelegate {
         final PayloadDataSupplier payloadDataSupplier = new TestPayloadDataSupplier(identifier());
 
         // Override sensor config defaults - Since v2.3 July 2024
-        BLESensorConfiguration.heraldProtocolV2Enabled = true; // Feature flag
-        BLESensorConfiguration.heraldProtocolV1Enabled = false;
+        BLESensorConfiguration.heraldProtocolV2Enabled = false; // Feature flag
+        BLESensorConfiguration.heraldProtocolV1Enabled = true;
 
         sensor = new SensorArray(getApplicationContext(), payloadDataSupplier);
         // Add appDelegate as listener for detection events for logging and start sensor

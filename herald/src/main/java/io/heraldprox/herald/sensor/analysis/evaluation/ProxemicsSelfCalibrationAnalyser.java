@@ -104,7 +104,10 @@ public class ProxemicsSelfCalibrationAnalyser implements SensorDelegate {
     public void sensor(@NonNull SensorType sensor, boolean available, @NonNull TargetIdentifier didDeleteOrDetect) {
         // handle deletion
         if (!available) {
-            Objects.requireNonNull(records.get(didDeleteOrDetect)).outOfRange(new Date());
+            DeviceCalibrationRecord detected = records.get(didDeleteOrDetect);
+            if (null != detected) {
+                detected.outOfRange(new Date());
+            }
         }
     }
     @Override

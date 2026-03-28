@@ -71,7 +71,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
     // Scan ON/OFF/PROCESS durations
     private final static long scanOnDurationMillis = TimeInterval.seconds(4).millis();
     private final static long scanRestDurationMillis = TimeInterval.seconds(1).millis();
-    private final static long scanProcessDurationMillis = TimeInterval.seconds(60).millis();
+    private final static long scanProcessDurationMillis = TimeInterval.seconds(5).millis();
     private final static long scanOffDurationMillis = TimeInterval.seconds(2).millis();
     /**
      * Connection timeout data collected from 34,394 successful connections
@@ -109,7 +109,8 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
      * 10 device test was conducted using 12s, 8s, 7s, 6s, and 3s timeouts. Test results show
      * 8s timeout offers optimal performance, achieving 98.9% continuity and 2.78%/hr battery drain.
      */
-    private final static long timeToConnectDeviceLimitMillis = TimeInterval.seconds(8).millis();
+    // Changes in V2.3 from 8s to 2s to ensure we try to connect oa all devices within the 150 second advert limit, and not get stuck waiting on one non herald device
+    private final static long timeToConnectDeviceLimitMillis = TimeInterval.seconds(2).millis();
     // Collect connection and processing statistics to determine timeouts based on actual data
     @NonNull
     private final Histogram timeToConnectDevice;
@@ -138,6 +139,8 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         nothing, readPayload, writePayload, writeRSSI, writePayloadSharing, immediateSend,
         readModel, readDeviceName, writeV2Payload, discoverServices
     }
+
+    private boolean isCurrentlyConnecting = false;
 
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override
@@ -329,6 +332,10 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             logger.debug("scanLoopTask, bleTimer");
             switch (scanLoopState) {
                 case processed: {
+                    if (isCurrentlyConnecting) {
+                        logger.info("scanLoopTask, start scan being skipped as isCurrentlyConnecting is true.");
+                        break;
+                    }
                     if (receiverEnabled.get() && bluetoothStateManager.state() == BluetoothState.poweredOn) {
                         final long period = timeSincelastStateChange(now);
                         if (period >= scanOffDurationMillis) {
@@ -922,25 +929,43 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         final BluetoothDevice peripheral = device.peripheral();
         BluetoothGatt gatt = null;
         if (null != peripheral) {
+            logger.debug("taskConnectDevice, Have non null peripheral (device={})",device);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                     logger.fault("taskConnectDevice, no BLUETOOTH_CONNECT permission");
                     return false;
                 }
             }
+            isCurrentlyConnecting = true;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 // API 23 and above - force Low Energy only
+                logger.debug("taskConnectDevice, Requesting connection using LE (device={})",device);
                 gatt = peripheral.connectGatt(context, false, this, BluetoothDevice.TRANSPORT_LE);
             } else {
                 // support back to API 21
+                logger.debug("taskConnectDevice, Requesting connection using any Bluetooth method (device={})",device);
                 gatt = peripheral.connectGatt(context, false, this);
             }
         }
         if (null == gatt) {
             logger.fault("taskConnectDevice, connect failed (device={})", device);
+            isCurrentlyConnecting = false;
             device.state(BLEDeviceState.disconnected);
             return false;
         }
+//        // following can only be ran once connected
+//        if (device.state() == BLEDeviceState.connecting) {
+//            if (null != gatt) {
+//                boolean requestSent = gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+//                if (requestSent) {
+//                    logger.info("taskConnectDevice, gatt connection priority request sent successfully (device={})", device);
+//                } else {
+//                    logger.fault("taskConnectDevice, gatt connection priority request not sent successfully (device={})", device);
+//                }
+//            } else {
+//                logger.fault("taskConnectDevice, State connecting but gatt is set to null (device={})", device);
+//            }
+//        }
         // Wait for connection
         // A connect request should normally result in .connected or .disconnected state which is
         // set asynchronously by the callback function onConnectionStateChange(). However, some
@@ -951,15 +976,17 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         // a consistent default .disconnected state.
         while (device.state() != BLEDeviceState.connected && device.state() != BLEDeviceState.disconnected && (System.currentTimeMillis() - timeConnect) < timeToConnectDeviceLimitMillis) {
             try {
+                logger.debug("taskConnectDevice, sleeping for 200ms waiting for connection (device={})",device);
                 Thread.sleep(200);
             } catch (Throwable e) {
-                logger.fault("Timer interrupted", e);
+                logger.fault("taskConnectDevice, Sleep Timer interrupted", e);
             }
         }
         if (device.state() != BLEDeviceState.connected) {
             // Failed to establish connection within time limit, assume connection failure
             // and disconnect device to put it in a consistent default .disconnected state
             logger.fault("taskConnectDevice, connect timeout (device={})", device);
+            isCurrentlyConnecting = false;
             try {
                 gatt.close();
             } catch (Throwable e) {
@@ -994,12 +1021,13 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         // .disconnected state.
         while (device.state() != BLEDeviceState.disconnected && (System.currentTimeMillis() - timeConnect) < scanProcessDurationMillis) {
             try {
-                Thread.sleep(500);
+                Thread.sleep(200);
             } catch (Throwable e) {
                 logger.fault("Timer interrupted", e);
             }
         }
         boolean success = true;
+        isCurrentlyConnecting = false;
         // Timeout connection if required, and always set state to disconnected
         if (device.state() != BLEDeviceState.disconnected) {
             // Failed to complete tasks and disconnect within time limit, assume failure
@@ -1036,7 +1064,18 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
     public void onConnectionStateChange(@NonNull final BluetoothGatt gatt, final int status, final int newState) {
         final BLEDevice device = database.device(gatt.getDevice());
         logger.debug("onConnectionStateChange (device={},status={},state={})", device, bleStatus(status), bleState(newState));
-        if (BluetoothProfile.STATE_CONNECTED == newState) {
+        if (BluetoothProfile.STATE_CONNECTING == newState) {
+            logger.info("onConnectionStateChange, StateConnecting (device={},status={},state={})",device,bleStatus(status),bleState(newState));
+            // Added in V2.4 to fix connection failure issues on Moto G devices
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    logger.fault("onConnectionStateChange, no BLUETOOTH_CONNECT permission");
+                    return;
+                }
+                boolean success = gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+                logger.info("onConnectionStateChange, result of requestConnectionPriority(HIGH) (device={},status={},state={},result={})",device,bleStatus(status),bleState(newState),success);
+            }
+        } else if (BluetoothProfile.STATE_CONNECTED == newState) {
             device.state(BLEDeviceState.connected);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -1066,6 +1105,13 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
     public void onServicesDiscovered(@NonNull final BluetoothGatt gatt, final int status) {
         final BLEDevice device = database.device(gatt.getDevice());
         logger.debug("onServicesDiscovered (device={},status={})", device, bleStatus(status));
+//        // if discovered then we must be connected
+//        device.state(BLEDeviceState.connected);
+
+        List<BluetoothGattService> svcs = gatt.getServices();
+        for (BluetoothGattService svc: svcs) {
+            logger.debug("onServicesDiscovered, device has service (device={},svc={})", device, svc.getUuid());
+        }
 
         // Sensor characteristics
         BluetoothGattService service = gatt.getService(BLESensorConfiguration.linuxFoundationServiceUUID);
@@ -1398,6 +1444,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                 return; // => onCharacteristicRead | timeout
             }
             case readPayload: {
+                logger.info("nextTask is readPayload (task=readPayload,device={},reason=readCharacteristicFailed)", device);
                 final BluetoothGattCharacteristic payloadCharacteristic = device.payloadCharacteristic();
                 if (null == payloadCharacteristic) {
                     logger.fault("nextTask failed (task=readPayload,device={},reason=missingPayloadCharacteristic)", device);
@@ -1413,10 +1460,15 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                     return; // => onCharacteristicRead | timeout
                 }
                 // HERALD handles fragmentation internally
-                else if (!gatt.readCharacteristic(payloadCharacteristic)) {
-                    logger.fault("nextTask failed (task=readPayload,device={},reason=readCharacteristicFailed)", device);
-                    gatt.disconnect();
-                    return; // => onConnectionStateChange
+                else {
+                    boolean readResult = gatt.readCharacteristic(payloadCharacteristic);
+                    if (!readResult) {
+                        logger.fault("nextTask failed (task=readPayload,device={},reason=readCharacteristicFailed)", device);
+                        gatt.disconnect();
+                        return; // => onConnectionStateChange
+                    } else {
+                        logger.info("nextTask read operation has started (task=readPayload,device={},reason=readCharacteristicFailed)", device);
+                    }
                 }
                 // TODO incorporate Android non-auth security patch once license confirmed
                 logger.debug("nextTask (task=readPayload,device={})", device);

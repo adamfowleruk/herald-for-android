@@ -4,6 +4,8 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <!-- Permissions for Bluetooth LE as background process -->
+    <!-- Since Android 14 (Oct 2023) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- Android 12+ Only -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
