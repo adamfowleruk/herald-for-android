@@ -285,11 +285,12 @@ public class BLESensorConfiguration {
      *  Payload update at regular intervals, in addition to default HERALD communication process.
      *  <br>- Use this to enable regular payload reads according to app payload lifespan.
      *  <br>- Set to .never to disable this function.
+     *  <br>- Set to greater than BLE Privacy Mac rotation time (E.g. 20 minutes) to force the writing of this device's payload to other Android devices, as well as iOS
      *  <br>- Payload updates are reported to SensorDelegate as didRead.
      *  <br>- Setting take immediate effect, no need to restart BLESensor, can also be applied while BLESensor is active.
      */
     @NonNull
-    public static TimeInterval payloadDataUpdateTimeInterval = TimeInterval.never;
+    public static TimeInterval payloadDataUpdateTimeInterval = new TimeInterval(20 * TimeInterval.minute.value); // Since V2.3 to write to Android too. TimeInterval.never;
 
     /**
      *  Filter duplicate payload data and suppress sensor(didRead:fromTarget) delegate calls

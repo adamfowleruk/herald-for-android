@@ -54,6 +54,8 @@ import io.heraldprox.herald.sensor.datatype.TimeInterval;
 import io.heraldprox.herald.sensor.protocol.HeraldProtocolV2;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
@@ -895,6 +897,28 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         // call, so optimising new device handling is more effective.
         final long timeStart = System.currentTimeMillis();
         int devicesProcessed = 0;
+        // V2.3 Added 30 Mar 2026 - Order by descending last RSSI value to prioritise nearby devices
+        Collections.sort(discovered,new Comparator<BLEDevice>() {
+            @Override
+            public int compare(BLEDevice d1, BLEDevice d2) {
+                RSSI r1 = d1.rssi();
+                RSSI r2 = d2.rssi();
+                if (null == r1 && null == r2) {
+                    return 0;
+                }
+                if (null == r2) {
+                    return 1;
+                }
+                if (r1.value == r2.value) {
+                    return 0;
+                }
+                if (r1.value < r2.value) {
+                    return -1;
+                }
+                return 1;
+            }
+        });
+        Collections.reverse(discovered); // Ensures descending signal strength
         for (final BLEDevice device : discovered) {
             // Stop process if exceeded time limit
             final long elapsedTime = System.currentTimeMillis() - timeStart;
@@ -976,8 +1000,8 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         // a consistent default .disconnected state.
         while (device.state() != BLEDeviceState.connected && device.state() != BLEDeviceState.disconnected && (System.currentTimeMillis() - timeConnect) < timeToConnectDeviceLimitMillis) {
             try {
-                logger.debug("taskConnectDevice, sleeping for 200ms waiting for connection (device={})",device);
-                Thread.sleep(200);
+//                logger.debug("taskConnectDevice, sleeping for 50ms waiting for connection (device={})",device);
+                Thread.sleep(50);
             } catch (Throwable e) {
                 logger.fault("taskConnectDevice, Sleep Timer interrupted", e);
             }
@@ -988,6 +1012,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             logger.fault("taskConnectDevice, connect timeout (device={})", device);
             isCurrentlyConnecting = false;
             try {
+                gatt.disconnect();
                 gatt.close();
             } catch (Throwable e) {
                 logger.fault("taskConnectDevice, close failed (device={})", device, e);
@@ -1021,7 +1046,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
         // .disconnected state.
         while (device.state() != BLEDeviceState.disconnected && (System.currentTimeMillis() - timeConnect) < scanProcessDurationMillis) {
             try {
-                Thread.sleep(200);
+                Thread.sleep(20);
             } catch (Throwable e) {
                 logger.fault("Timer interrupted", e);
             }
@@ -1034,6 +1059,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
             // and disconnect device to put it in a consistent default .disconnected state
             logger.fault("taskConnectDevice, disconnect timeout (device={})", device);
             try {
+                gatt.disconnect();
                 gatt.close();
             } catch (Throwable e) {
                 logger.fault("taskConnectDevice, close failed (device={})", device, e);
@@ -1091,6 +1117,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                     return;
                 }
             }
+            gatt.disconnect();
             gatt.close();
             device.state(BLEDeviceState.disconnected);
             if (0 != status) {
@@ -1366,6 +1393,7 @@ public class ConcreteBLEReceiver extends BluetoothGattCallback implements BLERec
                 }
             } else {
                 // Since v2.2 - Write our payload to iOS if needed (i.e. if they haven't detected us)
+                // If commented out in v2.3 to write payload to Android as well as iOS
                 if (device.operatingSystem() == BLEDeviceOperatingSystem.ios) {
                     final TimeInterval lastTime = device.timeIntervalSinceLastWritePayload();
                     logger.debug("nextTaskForDevice, timeSinceLastWrite (device={},task=writePayload,elapsed={})", device, lastTime);

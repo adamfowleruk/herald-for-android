@@ -60,6 +60,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static android.bluetooth.BluetoothProfile.GATT;
+import static android.bluetooth.BluetoothProfile.GATT_SERVER;
 import static android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED;
 import static android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE;
 import static android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED;
@@ -237,7 +239,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         case started:
                             if (period >= advertOnDurationMillis) {
                                 logger.debug("advertLoopTask, healthCheck, manuallyEnforceAdvertGaps, advert on for too long ({}ms). In started state. Soft stopping advert.",period);
-                                doStop(now, false);
+                                doStop(now, true);
                             }
                             break;
                         case stopped:
@@ -247,11 +249,14 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                             }
                             break;
                     }
+                    return;
                 } else {
+
                     final long period = timeSincelastStateChange(now);
                     if (advertLoopState == AdvertLoopState.stopped && period > advertOffDurationMillis) {
                         logger.debug("advertLoopTask, healthCheck, isStopped check, advert off for too long ({}ms). In Stopped state. Starting advert.",period);
                         doStart();
+                        return;
                     }
                 }
 
@@ -285,6 +290,8 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
 //                logger.fault("advertLoopTask, healthCheck, Bluetooth powered off");
                 // Succeeding silently so we don't fill log files
             }
+            logger.debug("advertLoopTask, healthCheck, falling back to calling set GATT service");
+            setGattService(logger, context, bluetoothGattServer);
         }
 
         private void doStart() {
@@ -384,6 +391,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             healthCheck(); // Check to see if (for example) we need to force stopping
             switch (advertLoopState) {
                 case stopped: {
+                    logger.debug("advertLoopTask, bleTimer, performing healthcheck");
 //                    healthCheck();
                     break;
                 }
@@ -463,7 +471,12 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     }
 //                    result = false;
                 }
-                if (!result && (bluetoothGattServer.getServices().size() == 0 ||
+                UUID ourAdvertisedId = BLESensorConfiguration.linuxFoundationServiceUUID;
+                if (BLESensorConfiguration.customServiceAdvertisingEnabled) {
+                    ourAdvertisedId = BLESensorConfiguration.customServiceUUID;
+                }
+                BluetoothGattService ourService = bluetoothGattServer.getService(ourAdvertisedId);
+                if (!result && (ourService == null ||
                         (BLESensorConfiguration.customServiceAdvertisingEnabled &&
                                 (null == bluetoothGattServer.getService(BLESensorConfiguration.customServiceUUID) ||
                                 null == bluetoothGattServer.getService(BLESensorConfiguration.customServiceUUID).getCharacteristics() ||
@@ -599,13 +612,14 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             advertServiceUUID = BLESensorConfiguration.customServiceUUID;
             advertManufacturerId = BLESensorConfiguration.customManufacturerIdForSensor;
         }
+        logger.info("startAdvertising service advertised? (serviceUUID={},manufacturerId={})",advertServiceUUID,advertManufacturerId);
         if (null != advertServiceUUID) { // We may not want to advertise Herald or Custom services - just scan.
             // This logic added since v2.1.0-beta4.
             // See BLESensorConfiguration.pseudoDeviceAddressEnabled for details.
             if (BLESensorConfiguration.pseudoDeviceAddressEnabled) {
                 final AdvertiseData data = new AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
-                        .setIncludeTxPowerLevel(false)
+                        .setIncludeTxPowerLevel(true) // Added V2.3 for future TxPower correction
                         .addServiceUuid(new ParcelUuid(advertServiceUUID))
                         .addManufacturerData(advertManufacturerId, pseudoDeviceAddress.data)
                         .build();
@@ -614,13 +628,27 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             } else {
                 final AdvertiseData data = new AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
-                        .setIncludeTxPowerLevel(false)
+                        .setIncludeTxPowerLevel(true) // Added V2.3 for future TxPower correction
                         .addServiceUuid(new ParcelUuid(advertServiceUUID))
                         .build();
                 bluetoothLeAdvertiser.startAdvertising(settings, data, advertiseCallback);
                 logger.debug("startAdvertising successful (pseudoDeviceAddress=nil,settings={})", settings);
             }
+        } else {
+            logger.info("startAdvertising NO SERVICES IN SERVICES TO ADVERTISE LIST");
         }
+    }
+
+    private void logBluetoothManagerState(@NonNull final BluetoothManager manager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                logger.fault("logBluetoothManagerState, no BLUETOOTH_CONNECT permission");
+                return;
+            }
+        }
+        logger.debug("logBluetoothManagerState (clientConns={},serverConns={}) ",
+                manager.getConnectedDevices(GATT),
+                manager.getConnectedDevices(GATT_SERVER));
     }
 
     @Nullable
@@ -628,9 +656,10 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
         logger.debug("startGattServer");
         final BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         if (null == bluetoothManager) {
-            logger.fault("Bluetooth unsupported");
+            logger.fault("startGattServer, Bluetooth unsupported");
             return null;
         }
+        logBluetoothManagerState(bluetoothManager);
         // Data = rssi (4 bytes int) + payload (remaining bytes)
         final AtomicReference<BluetoothGattServer> server = new AtomicReference<>(null);
         final BluetoothGattServerCallback callback = new BluetoothGattServerCallback() {
@@ -647,6 +676,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                 }
                 final PayloadData payloadData = payloadDataSupplier.payload(new PayloadTimestamp(), device);
                 onCharacteristicReadPayloadData.put(key, payloadData);
+                logBluetoothManagerState(bluetoothManager);
                 return payloadData;
             }
 
@@ -664,6 +694,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     System.arraycopy(value, 0, data, partialData.length, value.length);
                 }
                 onCharacteristicWriteSignalData.put(key, data);
+                logBluetoothManagerState(bluetoothManager);
                 return data;
             }
 
@@ -681,6 +712,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     System.arraycopy(value, 0, data, partialData.length, value.length);
                 }
                 onCharacteristicWriteSignalData.put(key, data);
+                logBluetoothManagerState(bluetoothManager);
                 return data;
             }
 
@@ -729,7 +761,9 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     device.state(BLEDeviceState.disconnected);
                     removeData(bluetoothDevice);
                 }
+                logBluetoothManagerState(bluetoothManager);
                 myLoopTask.healthCheck();
+                logBluetoothManagerState(bluetoothManager);
             }
 
 
@@ -743,6 +777,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         (characteristic.getUuid().equals(BLESensorConfiguration.androidSignalCharacteristicUUID) ? "signal" : "unknown"),
                         (null != value ? value.length : "null")
                 );
+                logBluetoothManagerState(bluetoothManager);
 
                 if (BLESensorConfiguration.heraldProtocolV2Enabled) {
                     if (characteristic.getUuid().equals(BLESensorConfiguration.heraldProtocolV2CharacteristicUUID)) {
@@ -781,18 +816,18 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                     }
                 }
 
-                if (characteristic.getUuid() != BLESensorConfiguration.androidSignalCharacteristicUUID) {
-                    if (responseNeeded) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                                logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
-                                return;
-                            }
-                        }
-                        server.get().sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, offset, value);
-                    }
-                    return;
-                }
+//                if (characteristic.getUuid() != BLESensorConfiguration.androidSignalCharacteristicUUID) {
+//                    if (responseNeeded) {
+//                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+//                            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+//                                logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
+//                                return;
+//                            }
+//                        }
+//                        server.get().sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, offset, value);
+//                    }
+//                    return;
+//                }
 
                 if (BLESensorConfiguration.heraldProtocolV1Enabled) {
 
@@ -818,6 +853,28 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         }
                         return;
                     }
+                    // Since V2.3 - lightweight write protocol support, mainly aimed at android to android detection
+//                    if (characteristic.getUuid().equals(BLESensorConfiguration.payloadCharacteristicUUID)) {
+//                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={})", targetDevice);
+//                        if (null == data.value) {
+//                            return;
+//                        }
+//                        final PayloadData payloadData = new PayloadData(data.value);
+//                        logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
+//                        targetDevice.payloadData(payloadData);
+//
+//                        if (responseNeeded) {
+//                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+//                                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+//                                    logger.fault("BluetoothGattServerCallback, onCharacteristicWriteRequest, no BLUETOOTH_CONNECT permission");
+//                                    return;
+//                                }
+//                            }
+//                            server.get().sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+//                        }
+//
+//                        return;
+//                    }
                     switch (SignalCharacteristicData.detect(data)) {
                         case rssi: {
                             final RSSI rssi = SignalCharacteristicData.decodeWriteRSSI(data);
@@ -839,9 +896,10 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                                 break;
                             }
                             logger.debug("BluetoothGattServerCallback, didReceiveWrite (dataType=payload,central={},payload={})", targetDevice, payloadData);
-                            // Only receive-only Android devices write payload
-                            targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
-                            targetDevice.receiveOnly(true);
+                            // The below is not true since V2.3 (If we implement this on iOS too)
+//                            // Only receive-only Android devices write payload
+//                            targetDevice.operatingSystem(BLEDeviceOperatingSystem.android);
+//                            targetDevice.receiveOnly(true);
                             targetDevice.payloadData(payloadData);
                             onCharacteristicWriteSignalData.remove(device.getAddress());
                             break;
@@ -905,6 +963,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                         return;
                     }
                 }
+                logBluetoothManagerState(bluetoothManager);
                 if (characteristic.getUuid() == BLESensorConfiguration.payloadCharacteristicUUID || characteristic.getUuid().equals(BLESensorConfiguration.interopOpenTracePayloadCharacteristicUUID)) {
                     final PayloadData payloadData = onCharacteristicReadPayloadData(device);
                     if (payloadData != null && offset > payloadData.value.length) {
@@ -930,11 +989,22 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
         logger.debug("setGattService");
         final BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         if (null == bluetoothManager) {
-            logger.fault("Bluetooth unsupported");
+            logger.fault("setGattService, Bluetooth unsupported");
             return;
         }
         if (null == bluetoothGattServer) {
-            logger.fault("Bluetooth LE advertiser unsupported");
+            logger.fault("setGattService, Bluetooth LE advertiser unsupported");
+            return;
+        }
+        // New in V2.3 - Check if we're advertising exactly one, and if so, leave it alone!
+        // Custom service UUID added since v2.2 February 2023
+        UUID ourAdvertisedId = BLESensorConfiguration.linuxFoundationServiceUUID;
+        if (BLESensorConfiguration.customServiceAdvertisingEnabled) {
+            ourAdvertisedId = BLESensorConfiguration.customServiceUUID;
+        }
+        BluetoothGattService ourService = bluetoothGattServer.getService(ourAdvertisedId);
+        if (null != ourService) {
+            logger.fault("setGattService, our service is already advertised - leaving alone! (service={})",ourService.getUuid());
             return;
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -943,12 +1013,15 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
                 return;
             }
         }
-        for (final BluetoothDevice device : bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)) {
+        for (final BluetoothDevice device : bluetoothManager.getConnectedDevices(GATT)) {
+            logger.debug("setGattService, cancelling gatt connection (with={})",device.getAddress());
             bluetoothGattServer.cancelConnection(device);
         }
-        for (final BluetoothDevice device : bluetoothManager.getConnectedDevices(BluetoothProfile.GATT_SERVER)) {
+        for (final BluetoothDevice device : bluetoothManager.getConnectedDevices(GATT_SERVER)) {
+            logger.debug("setGattService, cancelling gatt server connection (with={})",device.getAddress());
             bluetoothGattServer.cancelConnection(device);
         }
+
         // Print all services out before removing them - useful for device debug information
         List<BluetoothGattService> servicesList = bluetoothGattServer.getServices();
         for (final BluetoothGattService svc : servicesList) {
@@ -959,12 +1032,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
         }
         // Only modify our own service (This should be the only service on GATT we can see anyway)
 //        bluetoothGattServer.clearServices();
-        // Custom service UUID added since v2.2 February 2023
-        UUID ourAdvertisedId = BLESensorConfiguration.linuxFoundationServiceUUID;
-        if (BLESensorConfiguration.customServiceAdvertisingEnabled) {
-            ourAdvertisedId = BLESensorConfiguration.customServiceUUID;
-        }
-        BluetoothGattService ourService = bluetoothGattServer.getService(ourAdvertisedId);
+        ourService = bluetoothGattServer.getService(ourAdvertisedId);
         // Added in V2.3 to prevent duplicate service adverts - some without characteristics set - in case of async call to setGattService
         while (null != ourService) {
             // Service is already advertised, so remove it
@@ -1013,6 +1081,7 @@ public class ConcreteBLETransmitter implements BLETransmitter, BluetoothStateMan
             heraldProtocolV2Characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT); // Write with response
             service.addCharacteristic(heraldProtocolV2Characteristic);
         }
+        logger.debug("setGattService calling addService for herald service (service={})",service.getUuid());
         bluetoothGattServer.addService(service);
 
         // Logic check - ensure there can be only one Herald service

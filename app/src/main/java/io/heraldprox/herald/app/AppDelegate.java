@@ -78,6 +78,8 @@ public class AppDelegate extends Application implements SensorDelegate {
         // Override sensor config defaults - Since v2.3 July 2024
         BLESensorConfiguration.heraldProtocolV2Enabled = false; // Feature flag
         BLESensorConfiguration.heraldProtocolV1Enabled = true;
+        BLESensorConfiguration.manuallyEnforceAdvertGaps = false; // Added in V2.3 to ensure Android fixes any advertising issue
+        // WARNING: THE ABOVE CAUSES PHONES' OWN SERVICES TO BE ADVERTISED MANY TIMES, BUT NOT OURS - UNLESS FORGET GATT RENEWAL IS TRUE?
 
         sensor = new SensorArray(getApplicationContext(), payloadDataSupplier);
         // Add appDelegate as listener for detection events for logging and start sensor
